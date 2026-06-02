@@ -31,7 +31,7 @@ export function accountStatusLabel(status?: AccountStatus): string {
     case 'active': return 'פעיל';
     case 'suspended': return 'מושהה';
     case 'blocked': return 'חסום';
-    case 'deleted': return 'מחוק';
+    case 'deleted': return 'מחק';
   }
 }
 

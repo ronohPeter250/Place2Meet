@@ -13,7 +13,6 @@ const statusOptions: { label: string; value: AccountStatus }[] = [
   { label: 'פעיל', value: 'active' },
   { label: 'מושהה', value: 'suspended' },
   { label: 'חסום', value: 'blocked' },
-  { label: 'מחוק', value: 'deleted' },
 ];
 
 const profileOptions = [
@@ -145,6 +144,13 @@ export function BusinessForm({ initialBusiness, onSaved }: { initialBusiness?: B
         <AdminTextInput label="כתובות תמונות, שורה לכל תמונה" value={photosText} onChangeText={setPhotosText} multiline style={styles.photos} />
       </AdminCard>
 
+      <AdminCard title="מחיקת עסק">
+        <Text style={styles.muted}>הכפתור מסמן את העסק למחיקה בלבד. השינוי יישמר רק אחרי לחיצה על “שמור עסק”.</Text>
+        <View style={styles.deleteActions}>
+          <AdminButton title={accountStatus === 'deleted' ? 'מחק נבחר' : 'מחק'} onPress={() => setAccountStatus('deleted')} variant="danger" disabled={saving || accountStatus === 'deleted'} />
+        </View>
+      </AdminCard>
+
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.actions}>
         <AdminButton title={saving ? 'שומר...' : 'שמור עסק'} onPress={handleSave} disabled={saving || !coordinates} />
@@ -189,8 +195,16 @@ const styles = StyleSheet.create({
     color: colors.errorLight,
     textAlign: 'right',
   },
+  muted: {
+    color: colors.textSecondary,
+    textAlign: 'right',
+  },
   actions: {
     alignSelf: 'flex-start',
     minWidth: 180,
+  },
+  deleteActions: {
+    alignSelf: 'flex-start',
+    minWidth: 160,
   },
 });

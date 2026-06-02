@@ -18,7 +18,7 @@ const statusOptions: { label: string; value: StatusFilter }[] = [
   { label: 'פעילים', value: 'active' },
   { label: 'מושהים', value: 'suspended' },
   { label: 'חסומים', value: 'blocked' },
-  { label: 'מחוקים', value: 'deleted' },
+  { label: 'מחק', value: 'deleted' },
 ];
 
 function parseLocalDateBoundary(value: string, boundary: 'start' | 'end'): Date | null {

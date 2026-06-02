@@ -3,7 +3,7 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { AdminButton, AdminCard, AdminSelect, AdminTextInput, StatusBadge } from '../../../src/admin/components/AdminControls';
 import { AdminShell } from '../../../src/admin/components/AdminShell';
-import { getAuditLogsForTarget, getUserForAdmin, updateUserAdminNotes, updateUserFlag, updateUserPhotoModeration, updateUserStatus } from '../../../src/admin/services';
+import { getAuditLogsForTarget, getUserForAdmin, updateUserAdminNotes, updateUserPhotoModeration, updateUserStatus } from '../../../src/admin/services';
 import { AccountStatus, AdminAuditLog, PhotoModerationStatus } from '../../../src/admin/types';
 import { adminErrorMessage, calculateAgeFromBirthday, formatTimestamp, getEffectiveAccountStatus, photoModerationKey } from '../../../src/admin/utils';
 import { UserProfile } from '../../../src/services/users';
@@ -13,7 +13,6 @@ const statusOptions: { label: string; value: AccountStatus }[] = [
   { label: 'פעיל', value: 'active' },
   { label: 'מושהה', value: 'suspended' },
   { label: 'חסום', value: 'blocked' },
-  { label: 'מחוק', value: 'deleted' },
 ];
 
 export default function AdminUserDetailsScreen() {
@@ -21,6 +20,7 @@ export default function AdminUserDetailsScreen() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [logs, setLogs] = useState<AdminAuditLog[]>([]);
   const [notes, setNotes] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState<AccountStatus>('active');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -34,6 +34,7 @@ export default function AdminUserDetailsScreen() {
       ]);
       setUser(profile);
       setNotes(profile?.adminNotes ?? '');
+      setSelectedStatus(getEffectiveAccountStatus(profile?.accountStatus));
       setLogs(auditLogs);
     } catch (err) {
       setError(adminErrorMessage(err, 'Failed to load user details'));
@@ -57,9 +58,16 @@ export default function AdminUserDetailsScreen() {
     }
   };
 
-  const changeStatus = (status: AccountStatus) => {
+  const saveChanges = () => {
     if (!user) return;
-    runAction(() => updateUserStatus(user.uid, user.accountStatus, status));
+    runAction(async () => {
+      if (selectedStatus !== getEffectiveAccountStatus(user.accountStatus)) {
+        await updateUserStatus(user.uid, user.accountStatus, selectedStatus);
+      }
+      if (notes !== (user.adminNotes ?? '')) {
+        await updateUserAdminNotes(user.uid, user.adminNotes, notes);
+      }
+    });
   };
 
   const moderatePhoto = (photo: string, status: PhotoModerationStatus) => {
@@ -68,6 +76,10 @@ export default function AdminUserDetailsScreen() {
   };
 
   const age = calculateAgeFromBirthday(user?.birthday);
+  const hasUnsavedChanges = Boolean(user) && (
+    selectedStatus !== getEffectiveAccountStatus(user?.accountStatus) ||
+    notes !== (user?.adminNotes ?? '')
+  );
 
   return (
     <AdminShell title="פרטי משתמש">
@@ -90,17 +102,15 @@ export default function AdminUserDetailsScreen() {
           </AdminCard>
 
           <AdminCard title="סטטוס ופעולות">
-            <AdminSelect label="סטטוס חשבון" value={getEffectiveAccountStatus(user.accountStatus)} options={statusOptions} onChange={changeStatus} />
+            <AdminSelect label="סטטוס חשבון" value={selectedStatus} options={statusOptions} onChange={setSelectedStatus} />
+            {selectedStatus === 'deleted' ? <Text style={styles.warning}>המשתמש מסומן למחיקה. לחץ “שמור שינויים” כדי להחיל.</Text> : null}
             <View style={styles.actions}>
-              <AdminButton title={user.flagged ? 'הסר סימון חשוד' : 'סמן כחשוד'} onPress={() => runAction(() => updateUserFlag(user.uid, user.flagged, !user.flagged))} variant="secondary" disabled={saving} />
+              <AdminButton title={saving ? 'שומר...' : 'שמור שינויים'} onPress={saveChanges} disabled={saving || !hasUnsavedChanges} />
             </View>
           </AdminCard>
 
           <AdminCard title="הערות אדמין">
             <AdminTextInput label="הערות" value={notes} onChangeText={setNotes} multiline style={styles.notes} />
-            <View style={styles.actions}>
-              <AdminButton title="שמור הערות" onPress={() => runAction(() => updateUserAdminNotes(user.uid, user.adminNotes, notes))} disabled={saving} />
-            </View>
           </AdminCard>
 
           <AdminCard title="תמונות">
@@ -128,6 +138,14 @@ export default function AdminUserDetailsScreen() {
             ))}
             {logs.length === 0 ? <Text style={styles.text}>אין פעולות להצגה</Text> : null}
           </AdminCard>
+
+          <AdminCard title="מחיקת משתמש">
+            <Text style={styles.muted}>הכפתור מסמן את המשתמש למחיקה בלבד. השינוי יישמר רק אחרי לחיצה על “שמור שינויים”.</Text>
+            <View style={styles.dangerActions}>
+              <AdminButton title={selectedStatus === 'deleted' ? 'מחק נבחר' : 'מחק'} onPress={() => setSelectedStatus('deleted')} variant="danger" disabled={saving || selectedStatus === 'deleted'} />
+              <AdminButton title={saving ? 'שומר...' : 'שמור שינויים'} onPress={saveChanges} disabled={saving || !hasUnsavedChanges} />
+            </View>
+          </AdminCard>
         </>
       )}
     </AdminShell>
@@ -137,6 +155,11 @@ export default function AdminUserDetailsScreen() {
 const styles = StyleSheet.create({
   error: {
     color: colors.errorLight,
+    textAlign: 'right',
+  },
+  warning: {
+    color: colors.errorLight,
+    fontWeight: '700',
     textAlign: 'right',
   },
   text: {
@@ -159,6 +182,12 @@ const styles = StyleSheet.create({
   actions: {
     alignSelf: 'flex-start',
     minWidth: 180,
+  },
+  dangerActions: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    gap: 10,
   },
   notes: {
     minHeight: 120,
