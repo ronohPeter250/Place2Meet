@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, TextInputProps, View, ViewStyle } from 'react-native';
 import { AccountStatus } from '../types';
 import { accountStatusLabel, getEffectiveAccountStatus } from '../utils';
 import { colors, typography } from '../../theme';
@@ -72,17 +72,19 @@ export function AdminButton({
   onPress,
   variant = 'primary',
   disabled = false,
+  style,
 }: {
   title: string;
   onPress: () => void;
   variant?: 'primary' | 'danger' | 'secondary';
   disabled?: boolean;
+  style?: ViewStyle;
 }) {
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={[styles.button, styles[`${variant}Button`], disabled && styles.disabled]}
+      style={[styles.button, styles[`${variant}Button`], style, disabled && styles.disabled]}
     >
       <Text style={styles.buttonText}>{title}</Text>
     </Pressable>

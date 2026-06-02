@@ -104,8 +104,11 @@ export default function AdminUserDetailsScreen() {
           <AdminCard title="סטטוס ופעולות">
             <AdminSelect label="סטטוס חשבון" value={selectedStatus} options={statusOptions} onChange={setSelectedStatus} />
             {selectedStatus === 'deleted' ? <Text style={styles.warning}>המשתמש מסומן למחיקה. לחץ “שמור שינויים” כדי להחיל.</Text> : null}
-            <View style={styles.actions}>
-              <AdminButton title={saving ? 'שומר...' : 'שמור שינויים'} onPress={saveChanges} disabled={saving || !hasUnsavedChanges} />
+            <View style={styles.statusActions}>
+              <AdminButton title={selectedStatus === 'deleted' ? 'מחק נבחר' : 'מחק'} onPress={() => setSelectedStatus('deleted')} variant="danger" disabled={saving || selectedStatus === 'deleted'} />
+            </View>
+            <View style={styles.fullWidthAction}>
+              <AdminButton title={saving ? 'שומר...' : 'שמור שינויים'} onPress={saveChanges} disabled={saving || !hasUnsavedChanges} style={styles.saveAction} />
             </View>
           </AdminCard>
 
@@ -139,13 +142,6 @@ export default function AdminUserDetailsScreen() {
             {logs.length === 0 ? <Text style={styles.text}>אין פעולות להצגה</Text> : null}
           </AdminCard>
 
-          <AdminCard title="מחיקת משתמש">
-            <Text style={styles.muted}>הכפתור מסמן את המשתמש למחיקה בלבד. השינוי יישמר רק אחרי לחיצה על “שמור שינויים”.</Text>
-            <View style={styles.dangerActions}>
-              <AdminButton title={selectedStatus === 'deleted' ? 'מחק נבחר' : 'מחק'} onPress={() => setSelectedStatus('deleted')} variant="danger" disabled={saving || selectedStatus === 'deleted'} />
-              <AdminButton title={saving ? 'שומר...' : 'שמור שינויים'} onPress={saveChanges} disabled={saving || !hasUnsavedChanges} />
-            </View>
-          </AdminCard>
         </>
       )}
     </AdminShell>
@@ -183,11 +179,17 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     minWidth: 180,
   },
-  dangerActions: {
+  statusActions: {
     alignSelf: 'flex-start',
     flexDirection: 'row-reverse',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  fullWidthAction: {
+    width: '100%',
+  },
+  saveAction: {
+    width: '100%',
   },
   notes: {
     minHeight: 120,
