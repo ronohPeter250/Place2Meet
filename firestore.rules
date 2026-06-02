@@ -1,0 +1,229 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    function userAdminFields() {
+      return ['accountStatus', 'updatedByAdminAt', 'updatedByAdminId'];
+    }
+
+    function businessAdminFields() {
+      return ['category', 'accountStatus', 'updatedByAdminAt', 'updatedByAdminId'];
+    }
+
+    function isActiveUser(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && (!('accountStatus' in get(/databases/$(database)/documents/users/$(userId)).data)
+          || get(/databases/$(database)/documents/users/$(userId)).data.accountStatus == 'active');
+    }
+
+    function isActiveBusiness(businessId) {
+      return exists(/databases/$(database)/documents/businesses/$(businessId))
+        && (!('accountStatus' in get(/databases/$(database)/documents/businesses/$(businessId)).data)
+          || get(/databases/$(database)/documents/businesses/$(businessId)).data.accountStatus == 'active');
+    }
+
+
+    function isActiveActor() {
+      return request.auth != null && (isAdmin() || isActiveUser(request.auth.uid) || isActiveBusiness(request.auth.uid));
+    }
+
+    function registrationGender() {
+      let gender = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.gender;
+      return gender == 'male' || gender == 'female' ? gender : 'other';
+    }
+
+    function otherAttendeeCountsUnchanged(gender) {
+      return (gender == 'male' || request.resource.data.get('attendeeCounts', {}).get('male', 0) == resource.data.get('attendeeCounts', {}).get('male', 0))
+        && (gender == 'female' || request.resource.data.get('attendeeCounts', {}).get('female', 0) == resource.data.get('attendeeCounts', {}).get('female', 0))
+        && (gender == 'other' || request.resource.data.get('attendeeCounts', {}).get('other', 0) == resource.data.get('attendeeCounts', {}).get('other', 0));
+    }
+
+    function isJoiningEvent() {
+      let gender = registrationGender();
+      return !(request.auth.uid in resource.data.get('attendeeIds', []))
+        && request.auth.uid in request.resource.data.get('attendeeIds', [])
+        && request.resource.data.get('attendeeIds', []).size() == resource.data.get('attendeeIds', []).size() + 1
+        && request.resource.data.get('attendeeIds', []).hasAll(resource.data.get('attendeeIds', []))
+        && request.resource.data.get('attendeeCount', 0) == resource.data.get('attendeeCount', 0) + 1
+        && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) + 1
+        && otherAttendeeCountsUnchanged(gender);
+    }
+
+    function isLeavingEvent() {
+      let gender = registrationGender();
+      return request.auth.uid in resource.data.get('attendeeIds', [])
+        && !(request.auth.uid in request.resource.data.get('attendeeIds', []))
+        && request.resource.data.get('attendeeIds', []).size() == resource.data.get('attendeeIds', []).size() - 1
+        && resource.data.get('attendeeIds', []).hasAll(request.resource.data.get('attendeeIds', []))
+        && request.resource.data.get('attendeeCount', 0) == resource.data.get('attendeeCount', 0) - 1
+        && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) - 1
+        && otherAttendeeCountsUnchanged(gender);
+    }
+
+    match /users/{userId} {
+      allow read: if isAdmin()
+        || (request.auth != null && request.auth.uid == userId)
+        || (isActiveActor() && isActiveUser(userId));
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(userAdminFields());
+      allow update: if isAdmin()
+        || (request.auth != null
+          && request.auth.uid == userId
+          && isActiveUser(userId)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(userAdminFields()));
+      allow delete: if false;
+
+      match /adminData/private {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    match /businesses/{businessId} {
+      allow read: if isAdmin() || (request.auth != null && (request.auth.uid == businessId || isActiveActor()));
+      allow create: if isAdmin()
+        || (request.auth != null
+          && request.auth.uid == businessId
+          && !request.resource.data.keys().hasAny(businessAdminFields()));
+      allow update: if isAdmin()
+        || (request.auth != null
+          && request.auth.uid == businessId
+          && isActiveBusiness(businessId)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(businessAdminFields()));
+      allow delete: if false;
+    }
+
+    match /venues/{venueId} {
+      allow read: if isActiveActor();
+      allow write: if request.auth != null
+        && request.auth.uid == venueId
+        && isActiveBusiness(request.auth.uid);
+    }
+
+    match /checkins/{checkinId} {
+      allow read: if isActiveActor();
+      allow create: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && resource.data.userId == request.auth.uid;
+    }
+
+    match /swipes/{swipeId} {
+      allow get: if isActiveActor()
+        && (resource == null
+            || resource.data.fromUser == request.auth.uid
+            || resource.data.toUser == request.auth.uid);
+      allow list: if isActiveActor()
+        && (resource.data.fromUser == request.auth.uid
+            || resource.data.toUser == request.auth.uid);
+      allow create: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && request.resource.data.fromUser == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /matches/{matchId} {
+      allow read: if isActiveActor()
+        && request.auth.uid in resource.data.users;
+      allow create: if false;
+      allow update, delete: if false;
+    }
+
+    match /chats/{chatId} {
+      allow read: if isActiveActor()
+        && request.auth.uid in resource.data.participants;
+      allow create: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants.size() == 2;
+      allow update: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && request.auth.uid in resource.data.participants;
+
+      match /messages/{messageId} {
+        allow read: if isActiveActor()
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow create: if request.auth != null
+          && isActiveUser(request.auth.uid)
+          && request.resource.data.senderId == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow update, delete: if false;
+      }
+    }
+
+    match /events/{eventId} {
+      allow read: if isActiveActor();
+      allow create: if request.auth != null
+        && isActiveBusiness(request.auth.uid)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.venueId == request.auth.uid
+        && request.resource.data.attendeeCount == 0
+        && request.resource.data.attendeeIds == []
+        && request.resource.data.attendeeCounts.male == 0
+        && request.resource.data.attendeeCounts.female == 0
+        && request.resource.data.attendeeCounts.other == 0;
+      allow update: if request.auth != null && (
+        (resource.data.createdBy == request.auth.uid
+          && isActiveBusiness(request.auth.uid)
+          && !('attendeeCount' in request.resource.data.diff(resource.data).affectedKeys())
+          && !('attendeeCounts' in request.resource.data.diff(resource.data).affectedKeys())
+          && !('attendeeIds' in request.resource.data.diff(resource.data).affectedKeys()))
+        ||
+        (isActiveUser(request.auth.uid)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['attendeeCount', 'attendeeCounts', 'attendeeIds'])
+          && (isJoiningEvent() || isLeavingEvent()))
+      );
+      allow delete: if false;
+    }
+
+    match /registrations/{regId} {
+      allow get: if isActiveActor();
+      allow list: if isActiveActor()
+        && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /debug_logs/{logId} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /admins/{adminId} {
+      allow read: if (request.auth != null && request.auth.uid == adminId) || isAdmin();
+      allow write: if false;
+    }
+
+    match /adminAuditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.adminId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
