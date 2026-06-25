@@ -56,3 +56,7 @@ yarn-error.*
 # firebase local cache & logs
 .firebase/
 firebase-debug.log
+
+# build artifacts (too large for git / GitHub 100MB limit)
+*.apk
+*.aab
