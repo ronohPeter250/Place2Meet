@@ -3,6 +3,7 @@ import { User } from 'firebase/auth';
 import { doc, DocumentData, DocumentSnapshot, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { signOut as firebaseSignOut } from '../services/auth';
+import { getLoginType, loadLoginType, subscribeLoginType } from '../services/loginState';
 import { AccountStatus } from '../admin/types';
 import { getEffectiveAccountStatus } from '../admin/utils';
 
@@ -10,7 +11,7 @@ interface AuthState {
   user: User | null;
   isLoading: boolean;
   isProfileComplete: boolean;
-  userType: 'user' | 'business' | null;
+  userType: 'user' | 'business';
   accountStatus: AccountStatus;
 }
 
@@ -23,60 +24,46 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 type ProfileState = {
   profileComplete: boolean;
-  userType: 'user' | 'business' | null;
   accountStatus: AccountStatus;
 };
 
-const emptyProfileState: ProfileState = {
-  profileComplete: false,
-  userType: null,
-  accountStatus: 'active',
+// Both profiles are tracked independently. A single uid (phone number) may have
+// a customer profile, a business profile, both, or neither. The active login
+// type — not doc precedence — decides which one drives the session.
+type Profiles = {
+  user: ProfileState | null;
+  business: ProfileState | null;
 };
 
-function profileStateFromSnapshot(
-  snapshot: DocumentSnapshot<DocumentData>,
-  userType: 'user' | 'business',
-): ProfileState | null {
+const EMPTY_PROFILES: Profiles = { user: null, business: null };
+
+function profileStateFromSnapshot(snapshot: DocumentSnapshot<DocumentData>): ProfileState | null {
   if (!snapshot.exists()) return null;
   const data = snapshot.data();
   return {
     profileComplete: data?.profileComplete === true,
-    userType,
     accountStatus: getEffectiveAccountStatus(data?.accountStatus),
   };
 }
 
-async function checkUserStatus(uid: string): Promise<{
-  profileComplete: boolean;
-  userType: 'user' | 'business' | null;
-  accountStatus: AccountStatus;
-}> {
+// One-shot read of both profile docs (used by refreshProfile after onboarding).
+async function readProfiles(uid: string): Promise<Profiles> {
   const [userDoc, businessDoc] = await Promise.all([
     getDoc(doc(db, 'users', uid)),
     getDoc(doc(db, 'businesses', uid)),
   ]);
-  if (userDoc.exists()) {
-    const data = userDoc.data();
-    return {
-      profileComplete: data?.profileComplete === true,
-      userType: 'user',
-      accountStatus: getEffectiveAccountStatus(data?.accountStatus),
-    };
-  }
-  if (businessDoc.exists()) {
-    const data = businessDoc.data();
-    return {
-      profileComplete: data?.profileComplete === true,
-      userType: 'business',
-      accountStatus: getEffectiveAccountStatus(data?.accountStatus),
-    };
-  }
-  return { profileComplete: false, userType: null, accountStatus: 'active' };
+  return {
+    user: profileStateFromSnapshot(userDoc),
+    business: profileStateFromSnapshot(businessDoc),
+  };
 }
 
-function subscribeProfileStatus(
+// Live subscription to both profile docs; publishes only once both have
+// reported at least once so the active selection is never based on a half-loaded
+// pair.
+function subscribeProfiles(
   uid: string,
-  onChange: (profile: ProfileState) => void,
+  onChange: (profiles: Profiles) => void,
   onError: () => void,
 ): () => void {
   let userSeen = false;
@@ -86,9 +73,10 @@ function subscribeProfileStatus(
 
   const publishIfReady = () => {
     if (!userSeen || !businessSeen) return;
-    const userProfile = latestUser ? profileStateFromSnapshot(latestUser, 'user') : null;
-    const businessProfile = latestBusiness ? profileStateFromSnapshot(latestBusiness, 'business') : null;
-    onChange(userProfile ?? businessProfile ?? emptyProfileState);
+    onChange({
+      user: latestUser ? profileStateFromSnapshot(latestUser) : null,
+      business: latestBusiness ? profileStateFromSnapshot(latestBusiness) : null,
+    });
   };
 
   const unsubscribeUser = onSnapshot(
@@ -117,72 +105,119 @@ function subscribeProfileStatus(
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    isLoading: true,
-    isProfileComplete: false,
-    userType: null,
-    accountStatus: 'active',
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [profiles, setProfiles] = useState<Profiles | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [activeType, setActiveType] = useState<'user' | 'business'>(getLoginType());
+  const [intentLoaded, setIntentLoaded] = useState(false);
 
-  const refreshProfile = useCallback(async () => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return;
-    const { profileComplete, userType, accountStatus } = await checkUserStatus(currentUser.uid);
-    setState(prev => ({ ...prev, isProfileComplete: profileComplete, userType, accountStatus }));
-  }, []);
-
-  const logout = useCallback(async () => {
-    await firebaseSignOut();
-    setState({ user: null, isLoading: false, isProfileComplete: false, userType: null, accountStatus: 'active' });
+  // Keep the active account type in sync with the persisted login type: restore
+  // it on cold start, and react to changes when the user logs in choosing a
+  // different option.
+  useEffect(() => {
+    let mounted = true;
+    loadLoginType().then(type => {
+      if (!mounted) return;
+      setActiveType(type);
+      setIntentLoaded(true);
+    });
+    const unsubscribe = subscribeLoginType(type => {
+      if (mounted) setActiveType(type);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     let latestCallId = 0;
-    let unsubscribeProfile: (() => void) | null = null;
+    let unsubscribeProfiles: (() => void) | null = null;
 
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = auth.onAuthStateChanged((nextUser) => {
       const callId = ++latestCallId;
-      unsubscribeProfile?.();
-      unsubscribeProfile = null;
+      unsubscribeProfiles?.();
+      unsubscribeProfiles = null;
 
-      // Set user immediately with isLoading=true so consumers (e.g. index.tsx)
-      // wait for the Firestore status check to complete before routing.
-      // Without this, there's a race window where onAuthStateChanged fires with a
-      // signed-in user but state still reads { user: null, isLoading: false } until
-      // checkUserStatus resolves — causing a wrong redirect to /(auth)/welcome.
-      if (user) {
-        setState(prev => ({ ...prev, user, isLoading: true }));
-      }
-
-      if (user) {
-        unsubscribeProfile = subscribeProfileStatus(
-          user.uid,
-          ({ profileComplete, userType, accountStatus }) => {
+      if (nextUser) {
+        // Set the user immediately (profiles still loading) so consumers wait
+        // for the Firestore status check before routing.
+        setUser(nextUser);
+        setProfiles(null);
+        setAuthResolved(false);
+        unsubscribeProfiles = subscribeProfiles(
+          nextUser.uid,
+          (nextProfiles) => {
             if (callId !== latestCallId) return;
-            setState({ user, isLoading: false, isProfileComplete: profileComplete, userType, accountStatus });
+            setUser(nextUser);
+            setProfiles(nextProfiles);
+            setAuthResolved(true);
           },
           () => {
             if (callId !== latestCallId) return;
-            setState({ user, isLoading: false, isProfileComplete: false, userType: null, accountStatus: 'active' });
+            setUser(nextUser);
+            setProfiles(EMPTY_PROFILES);
+            setAuthResolved(true);
           },
         );
       } else {
         if (callId !== latestCallId) return;
-        setState({ user: null, isLoading: false, isProfileComplete: false, userType: null, accountStatus: 'active' });
+        setUser(null);
+        setProfiles(null);
+        setAuthResolved(true);
       }
     });
 
     return () => {
       latestCallId = Infinity;
-      unsubscribeProfile?.();
+      unsubscribeProfiles?.();
       unsubscribe();
     };
   }, []);
 
-  const value = useMemo(
-    () => ({ ...state, refreshProfile, logout }),
-    [state, refreshProfile, logout]
+  const refreshProfile = useCallback(async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    const nextProfiles = await readProfiles(currentUser.uid);
+    setUser(currentUser);
+    setProfiles(nextProfiles);
+    setAuthResolved(true);
+  }, []);
+
+  const logout = useCallback(async () => {
+    await firebaseSignOut();
+    setUser(null);
+    setProfiles(null);
+    setAuthResolved(true);
+  }, []);
+
+  // Derive the session's account state from the ACTIVE login type. userType is
+  // the chosen type; isProfileComplete / accountStatus come from that type's doc
+  // (defaulting to "needs onboarding" when the doc for the chosen type is absent).
+  const derived = useMemo(() => {
+    const active = activeType === 'business' ? profiles?.business : profiles?.user;
+    return {
+      userType: activeType,
+      isProfileComplete: active?.profileComplete ?? false,
+      accountStatus: active?.accountStatus ?? 'active',
+    };
+  }, [activeType, profiles]);
+
+  // Still loading until: auth state resolved, the persisted intent restored,
+  // and (when signed in) the profile docs have arrived.
+  const isLoading = !authResolved || !intentLoaded || (!!user && profiles === null);
+
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      isLoading,
+      isProfileComplete: derived.isProfileComplete,
+      userType: derived.userType,
+      accountStatus: derived.accountStatus,
+      refreshProfile,
+      logout,
+    }),
+    [user, isLoading, derived, refreshProfile, logout],
   );
 
   return (

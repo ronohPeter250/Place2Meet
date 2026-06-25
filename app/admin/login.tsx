@@ -13,7 +13,7 @@ export default function AdminLogin() {
 
   useEffect(() => {
     if (admin) {
-      router.replace('/admin/users');
+      router.replace('/admin/overview');
     }
   }, [admin, router]);
 

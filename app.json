@@ -1,30 +1,74 @@
 {
   "expo": {
-    "name": "place2meet",
+    "name": "Place2Meet",
     "slug": "place2meet",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "scheme": "place2meet",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1A1A1A"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.place2meet.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Place2Meet needs your location to show nearby venues and people.",
+        "NSCameraUsageDescription": "Place2Meet needs camera access to take profile photos.",
+        "NSPhotoLibraryUsageDescription": "Place2Meet needs photo library access to upload profile photos.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1A1A1A"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "package": "com.place2meet.app",
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAtIQnOz8EpLSo7XiYOwxf2O4iJp1ByZFg"
+        }
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-location",
+      "expo-image-picker",
+      "expo-notifications",
+      "@react-native-community/datetimepicker",
+      "./plugins/withMapRenderer.js"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d24788fe-e0b3-47be-b818-3aed5849bf7c"
+      },
+      "firebase": {
+        "apiKey": "AIzaSyCfbmFqoCT_p5jZrV4JJn18593UwZTz14U",
+        "authDomain": "place2meet.firebaseapp.com",
+        "projectId": "place2meet",
+        "storageBucket": "place2meet.firebasestorage.app",
+        "messagingSenderId": "879886850695",
+        "appId": "1:879886850695:web:7a68b0140251492df97622"
+      },
+      "googleMapsApiKey": "AIzaSyAtIQnOz8EpLSo7XiYOwxf2O4iJp1ByZFg"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "output": "single",
+      "bundler": "metro"
     }
   }
 }

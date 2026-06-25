@@ -1,0 +1,123 @@
+import { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, Alert } from 'react-native';
+import { useRouter } from 'expo-router';
+import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
+import { Header } from '../../src/components/layout/Header';
+import { Button } from '../../src/components/ui/Button';
+import { TextField } from '../../src/components/ui/TextField';
+import { ProgressBar } from '../../src/components/ui/ProgressBar';
+import { createBusinessProfile } from '../../src/services/business';
+import { doc, deleteDoc } from 'firebase/firestore';
+import { db } from '../../src/config/firebase';
+import { useAuth } from '../../src/contexts/AuthContext';
+import { signOut } from '../../src/services/auth';
+import { colors, typography, spacing } from '../../src/theme';
+import { he } from '../../src/i18n/he';
+import { BUSINESS_TOTAL_STEPS } from '../../src/hooks/useBusinessOnboarding';
+
+export default function ContactNameScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleContinue = useCallback(async () => {
+    if (!firstName.trim() || !user || loading) return;
+
+    setLoading(true);
+    try {
+      const fullName = lastName.trim()
+        ? `${firstName.trim()} ${lastName.trim()}`
+        : firstName.trim();
+      await createBusinessProfile(user.uid, { contactName: fullName });
+      router.push('/(business-onboarding)/business-name');
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code;
+      if (code === 'already-exists' || code === 'permission-denied') {
+        router.push('/(business-onboarding)/business-name');
+      } else {
+        Alert.alert('שגיאה', 'אירעה שגיאה בשמירת הפרופיל. נסה שוב.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [firstName, lastName, user, loading, router]);
+
+  return (
+    <ScreenWrapper>
+      <ProgressBar current={1} total={BUSINESS_TOTAL_STEPS} />
+
+      <Header onBack={async () => {
+        if (user) {
+          try { await deleteDoc(doc(db, 'businesses', user.uid)); } catch {}
+        }
+        await signOut();
+        router.replace('/(auth)/welcome');
+      }} />
+
+      <View style={styles.content}>
+        <View style={styles.header}>
+          <Text style={styles.title}>{he.businessOnboarding.contactName.title}</Text>
+          <Text style={styles.subtitle}>{he.businessOnboarding.contactName.subtitle}</Text>
+        </View>
+
+        <View style={styles.fields}>
+          <TextField
+            value={firstName}
+            onChangeText={setFirstName}
+            placeholder="שם פרטי"
+            maxLength={50}
+            autoFocus
+          />
+          <TextField
+            value={lastName}
+            onChangeText={setLastName}
+            placeholder="שם משפחה"
+            maxLength={50}
+          />
+        </View>
+      </View>
+
+      <View style={styles.buttonContainer}>
+        <Button
+          title={he.businessOnboarding.continue}
+          onPress={handleContinue}
+          loading={loading}
+          disabled={loading}
+        />
+      </View>
+    </ScreenWrapper>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  header: {
+    marginTop: 32,
+    width: '100%',
+  },
+  title: {
+    ...typography.h1,
+    color: colors.text,
+    textAlign: 'right',
+    marginBottom: spacing.lg,
+  },
+  subtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'right',
+    lineHeight: 21,
+  },
+  fields: {
+    marginTop: 32,
+    gap: 16,
+  },
+  buttonContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: spacing.xxxl,
+  },
+});

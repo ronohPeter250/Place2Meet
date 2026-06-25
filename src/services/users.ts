@@ -85,7 +85,16 @@ export async function createUserProfile(
     sanitizedData.bio = sanitizeText(sanitizedData.bio, MAX_BIO_LENGTH);
   }
 
-  await setDoc(doc(db, 'users', uid), {
+  // Preserve profileComplete/createdAt when the profile already exists, so
+  // re-running this step never de-completes a finished account or resets its
+  // creation time. Those fields are stamped only on first creation.
+  const ref = doc(db, 'users', uid);
+  const existing = await getDoc(ref);
+  if (existing.exists()) {
+    await setDoc(ref, { ...sanitizedData, uid, lastActive: serverTimestamp() }, { merge: true });
+    return;
+  }
+  await setDoc(ref, {
     ...sanitizedData,
     uid,
     profileComplete: false,

@@ -1,0 +1,16 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 33.6538 33.6538" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Send icon">
+<circle id="Ellipse 42" cx="16.8269" cy="16.8269" r="16.8269" fill="var(--fill-0, #FF7043)"/>
+<g id="Frame" clip-path="url(#clip0_0_20)">
+<g id="Vector">
+</g>
+<path id="Vector_2" d="M10.0983 9.48646L25.1202 16.8269L10.0983 24.1674C10.0126 24.2003 9.91897 24.2071 9.82939 24.1867C9.73981 24.1664 9.65829 24.1199 9.59519 24.0531C9.53024 23.9846 9.48553 23.8994 9.46601 23.807C9.4465 23.7147 9.45293 23.6187 9.48462 23.5297L11.7588 16.8269L9.48462 10.1241C9.45293 10.0352 9.4465 9.93919 9.46601 9.84681C9.48553 9.75443 9.53024 9.66925 9.59519 9.60072C9.65829 9.53396 9.73981 9.48746 9.82939 9.46711C9.91897 9.44677 10.0126 9.4535 10.0983 9.48646Z" fill="var(--fill-0, white)" stroke="var(--stroke-0, white)" stroke-width="1.44231" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="Vector_3" d="M11.7588 16.8269H25.1202" stroke="var(--stroke-0, #E4E4FF)" stroke-width="1.44231" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_0_20">
+<rect width="22.1154" height="22.1154" fill="white" transform="translate(5.76923 5.76923)"/>
+</clipPath>
+</defs>
+</svg>

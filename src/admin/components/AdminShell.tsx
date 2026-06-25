@@ -33,6 +33,7 @@ export function AdminShell({ title, children }: { title: string; children: React
       {admin ? (
         <View style={styles.nav}>
           <View style={styles.navLinks}>
+            <NavButton title="סטטיסטיקות" active={pathname.startsWith('/admin/overview')} onPress={() => router.push('/admin/overview')} />
             <NavButton title="משתמשים" active={pathname.startsWith('/admin/users')} onPress={() => router.push('/admin/users')} />
             <NavButton title="עסקים" active={pathname.startsWith('/admin/businesses')} onPress={() => router.push('/admin/businesses')} />
           </View>

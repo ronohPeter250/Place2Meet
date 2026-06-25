@@ -31,7 +31,9 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -39,3 +41,18 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# graphify memory
+/.graphify-venv
+/graphify-out
+
+# local agent tooling, generated indexes & scratch (do not commit)
+.aegis/
+.claude/
+.codex/
+.dravix/
+.superpowers/
+
+# firebase local cache & logs
+.firebase/
+firebase-debug.log

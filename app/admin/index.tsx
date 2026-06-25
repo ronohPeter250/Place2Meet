@@ -10,7 +10,7 @@ export default function AdminIndex() {
 
   useEffect(() => {
     if (isLoading) return;
-    router.replace(admin ? '/admin/users' : '/admin/login');
+    router.replace(admin ? '/admin/overview' : '/admin/login');
   }, [admin, isLoading, router]);
 
   return (

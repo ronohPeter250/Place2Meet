@@ -80,7 +80,16 @@ export async function createBusinessProfile(
     sanitizedData.about = sanitizeText(sanitizedData.about, MAX_ABOUT_LENGTH);
   }
 
-  await setDoc(doc(db, 'businesses', uid), {
+  // Preserve profileComplete/createdAt when the profile already exists, so
+  // re-running this step never de-completes a finished account or resets its
+  // creation time. Those fields are stamped only on first creation.
+  const ref = doc(db, 'businesses', uid);
+  const existing = await getDoc(ref);
+  if (existing.exists()) {
+    await setDoc(ref, { ...sanitizedData, uid, lastActive: serverTimestamp() }, { merge: true });
+    return;
+  }
+  await setDoc(ref, {
     ...sanitizedData,
     uid,
     profileComplete: false,
