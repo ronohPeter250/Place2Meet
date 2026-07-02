@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet, useWindowDimensions, ActivityIndicator, Alert } from 'react-native';
 import { AddIcon } from './SvgIcons';
 import { PhotoSourceSheet } from './PhotoSourceSheet';
-import { pickImageFromSource, PhotoSource } from '../../lib/imagePick';
+import { pickImagesFromSource, PhotoSource } from '../../lib/imagePick';
 import { colors, borderRadius } from '../../theme';
 
 const GRID_GAP = 12;
@@ -44,8 +44,9 @@ export const PhotoGrid = React.memo(function PhotoGrid({
     setSheetVisible(true);
   }, []);
 
-  // Resolve the chosen source (camera / selfie / gallery) to a uri, then add or
-  // replace the photo at the pending slot. The sheet stays mounted while the
+  // Resolve the chosen source (camera / selfie / gallery) to one or more uris,
+  // then add or replace photos at the pending slot. Gallery allows selecting
+  // several at once (up to the free slots). The sheet stays mounted while the
   // native picker is open and closes afterward, avoiding the iOS
   // dismiss-then-present race.
   const handleSelectSource = useCallback(async (source: PhotoSource) => {
@@ -56,19 +57,38 @@ export const PhotoGrid = React.memo(function PhotoGrid({
     }
     pickingRef.current = true;
     try {
-      let uri: string | null = null;
+      // How many images may be chosen at once: every remaining free slot, plus
+      // one more when the tapped slot already holds a photo (it gets replaced).
+      const replacing = index < photos.length;
+      const limit = Math.max(1, maxPhotos - photos.length + (replacing ? 1 : 0));
+
+      let uris: string[] = [];
       try {
-        uri = await pickImageFromSource(source);
+        uris = await pickImagesFromSource(source, limit);
       } finally {
         setSheetVisible(false);
         setPendingIndex(null);
       }
-      if (!uri) return;
+      if (uris.length === 0) return;
 
-      if (validatePhoto) {
-        setValidatingIndex(index);
+      // Build the prospective list: replace the tapped slot with the first pick
+      // and append the rest; or append all when adding to an empty slot.
+      const newPhotos = [...photos];
+      if (replacing) {
+        newPhotos[index] = uris[0];
+        newPhotos.push(...uris.slice(1));
+      } else {
+        newPhotos.push(...uris);
+      }
+      const trimmed = newPhotos.slice(0, maxPhotos);
+
+      // Validation governs only the MAIN photo (index 0). Run it only when the
+      // main photo actually changed to a newly-picked image. The checking
+      // overlay is shown on slot 0 because that is the photo being validated.
+      if (validatePhoto && trimmed[0] && trimmed[0] !== photos[0]) {
+        setValidatingIndex(0);
         try {
-          const { ok, message } = await validatePhoto(uri, index);
+          const { ok, message } = await validatePhoto(trimmed[0], 0);
           if (!ok) {
             Alert.alert('', message ?? 'התמונה אינה תקינה. בחר תמונה אחרת.');
             return;
@@ -78,13 +98,7 @@ export const PhotoGrid = React.memo(function PhotoGrid({
         }
       }
 
-      const newPhotos = [...photos];
-      if (index < photos.length) {
-        newPhotos[index] = uri;
-      } else {
-        newPhotos.push(uri);
-      }
-      onPhotosChange(newPhotos.slice(0, maxPhotos));
+      onPhotosChange(trimmed);
     } finally {
       pickingRef.current = false;
     }

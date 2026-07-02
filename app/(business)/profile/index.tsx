@@ -13,6 +13,7 @@ import {
 } from '../../../src/components/ui/SvgIcons';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { db } from '../../../src/config/firebase';
+import { openWhatsApp } from '../../../src/lib/contact';
 import { colors } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
 
@@ -81,7 +82,7 @@ export default function BusinessProfileScreen() {
           <SettingsItem icon={<SettingsAboutIcon />} label={he.profile.aboutUs} onPress={() => {}} />
           <SettingsItem icon={<SettingsTermsIcon />} label={he.profile.terms} onPress={() => {}} />
           <SettingsItem icon={<SettingsPrivacyIcon />} label={he.profile.privacy} onPress={() => {}} />
-          <SettingsItem icon={<SettingsWhatsappIcon />} label={he.profile.whatsapp} onPress={() => {}} />
+          <SettingsItem icon={<SettingsWhatsappIcon />} label={he.profile.whatsapp} onPress={() => openWhatsApp()} />
         </View>
 
         <TouchableOpacity onPress={handleLogout} style={styles.logoutButton} activeOpacity={0.7}>

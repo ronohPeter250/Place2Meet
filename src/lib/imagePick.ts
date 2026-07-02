@@ -84,3 +84,35 @@ export function pickImageFromSource(source: PhotoSource): Promise<string | null>
   if (source === 'gallery') return pickFromGallery();
   return captureFromCamera(source === 'selfie' ? 'front' : 'back');
 }
+
+/**
+ * Pick one OR MORE images from the gallery in a single picker session (each
+ * downscaled before return). `selectionLimit` caps how many can be chosen
+ * (omit / <= 0 for unbounded). Returns the chosen uris, or [] on cancel /
+ * permission denial (a Hebrew Alert is shown on denial).
+ */
+export async function pickMultipleFromGallery(selectionLimit?: number): Promise<string[]> {
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (status !== 'granted') {
+    Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
+    return [];
+  }
+  const result = await ImagePicker.launchImageLibraryAsync({
+    ...PICKER_OPTIONS,
+    allowsMultipleSelection: true,
+    ...(selectionLimit && selectionLimit > 0 ? { selectionLimit } : {}),
+  });
+  if (result.canceled) return [];
+  return Promise.all(result.assets.map(asset => downscale(asset)));
+}
+
+/**
+ * Resolve a PhotoSource selection to one or more image uris. Gallery supports
+ * multi-select bounded by `limit`; camera/selfie always yield a single image.
+ * Returns [] on cancel / permission denial.
+ */
+export async function pickImagesFromSource(source: PhotoSource, limit?: number): Promise<string[]> {
+  if (source === 'gallery') return pickMultipleFromGallery(limit);
+  const uri = await captureFromCamera(source === 'selfie' ? 'front' : 'back');
+  return uri ? [uri] : [];
+}

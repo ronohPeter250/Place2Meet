@@ -12,6 +12,7 @@ import {
 } from '../../../src/components/ui/SvgIcons';
 import { getUserProfile, UserProfile, calculateAge } from '../../../src/services/users';
 import { useAuth } from '../../../src/contexts/AuthContext';
+import { openWhatsApp } from '../../../src/lib/contact';
 import { colors } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
 
@@ -88,7 +89,7 @@ export default function ProfileScreen() {
 
         <View style={styles.settingsSection}>
           <SettingsItem icon={<SettingsEditProfileIcon />} label={he.profile.editProfile} onPress={() => router.push('/(tabs)/profile/edit')} />
-          <SettingsItem icon={<SettingsContactIcon />} label={he.profile.contactUs} onPress={() => {}} />
+          <SettingsItem icon={<SettingsContactIcon />} label={he.profile.contactUs} onPress={() => openWhatsApp()} />
           <SettingsItem icon={<SettingsTermsIcon />} label={he.profile.terms} onPress={() => {}} />
           <SettingsItem icon={<SettingsPrivacyIcon />} label={he.profile.privacy} onPress={() => {}} />
         </View>
