@@ -50,6 +50,7 @@
     "react-native-worklets": "^0.5.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/react": "~19.1.0",
     "babel-preset-expo": "^55.0.18",
     "react-native-svg-transformer": "^1.5.3",

@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { Timestamp } from 'firebase/firestore';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
 import { ChatListItem } from '../../../src/components/ui/ChatListItem';
-import { subscribeToChats, Chat } from '../../../src/services/chat';
+import { subscribeToChats, Chat, reconcileMissingChats, isChatUnread } from '../../../src/services/chat';
 import { getUserProfile } from '../../../src/services/users';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors, typography } from '../../../src/theme';
@@ -14,6 +14,7 @@ import { he } from '../../../src/i18n/he';
 interface ChatWithName extends Chat {
   otherUserName: string;
   otherUserPhoto?: string;
+  unread: boolean;
 }
 
 export default function ChatListScreen() {
@@ -21,11 +22,16 @@ export default function ChatListScreen() {
   const { user } = useAuth();
   const [chats, setChats] = useState<ChatWithName[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const nameCache = useRef<Map<string, { name: string; photo?: string }>>(new Map());
 
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+
+    // Recover any matches whose chat was never created (a failure or the
+    // simultaneous-like race at match time) so they appear in the list.
+    reconcileMissingChats().catch(err => console.error('[ChatListScreen] reconcile failed:', err));
 
     const unsubscribe = subscribeToChats(async (rawChats) => {
       if (cancelled) return;
@@ -55,14 +61,23 @@ export default function ChatListScreen() {
             ...chat,
             otherUserName: cached?.name ?? 'Unknown',
             otherUserPhoto: cached?.photo,
+            unread: isChatUnread(chat, user.uid),
           };
         });
 
         setChats(enriched);
+        setError(false);
       } catch (err) {
         console.error('[ChatListScreen] enrichment failed:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
+    }, (err) => {
+      console.error('[ChatListScreen] subscription error:', err);
+      if (!cancelled) {
+        setLoading(false);
+        setError(true);
+      }
     });
 
     return () => {
@@ -81,6 +96,7 @@ export default function ChatListScreen() {
       lastMessage={item.lastMessage}
       lastMessageAt={item.lastMessageAt as Timestamp | null}
       photo={item.otherUserPhoto}
+      unread={item.unread}
       onPress={() => handleChatPress(item.id)}
     />
   ), [handleChatPress]);
@@ -93,7 +109,13 @@ export default function ChatListScreen() {
         <Text style={styles.title}>{he.chat.title}</Text>
       </View>
 
-      {chats.length === 0 && !loading ? (
+      {error && chats.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <ChatEmptyIcon />
+          <Text style={styles.emptyTitle}>שגיאה בטעינת הצ'אטים</Text>
+          <Text style={styles.emptySubtext}>בדוק את החיבור לאינטרנט ונסה שוב.</Text>
+        </View>
+      ) : chats.length === 0 && !loading ? (
         <View style={styles.emptyContainer}>
           <ChatEmptyIcon />
           <Text style={styles.emptyTitle}>{he.chat.noChats}</Text>

@@ -33,6 +33,21 @@ service cloud.firestore {
       return request.auth != null && (isAdmin() || isActiveUser(request.auth.uid) || isActiveBusiness(request.auth.uid));
     }
 
+    // The participant that is NOT the caller (for a 2-person chat).
+    function otherParticipant(participants) {
+      return participants[0] == request.auth.uid ? participants[1] : participants[0];
+    }
+
+    // True only if BOTH users have a stored swipe of action 'like' on each other
+    // (a real mutual match). Used to gate chat creation server-side so the
+    // client-side check in createChatForMatch cannot be bypassed.
+    function hasMutualLike(me, other) {
+      return exists(/databases/$(database)/documents/swipes/$(me + '_' + other))
+        && get(/databases/$(database)/documents/swipes/$(me + '_' + other)).data.action == 'like'
+        && exists(/databases/$(database)/documents/swipes/$(other + '_' + me))
+        && get(/databases/$(database)/documents/swipes/$(other + '_' + me)).data.action == 'like';
+    }
+
     function registrationGender() {
       let gender = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.gender;
       return gender == 'male' || gender == 'female' ? gender : 'other';
@@ -125,12 +140,16 @@ service cloud.firestore {
         && (resource == null
             || resource.data.fromUser == request.auth.uid
             || resource.data.toUser == request.auth.uid);
+      // List is restricted to your OWN outgoing swipes (fromUser). Allowing a
+      // toUser query would let a user enumerate everyone who liked/disliked them.
+      // Checking whether a specific person swiped on you is still possible via a
+      // targeted `get` (needed for match detection), just not enumeration.
       allow list: if isActiveActor()
-        && (resource.data.fromUser == request.auth.uid
-            || resource.data.toUser == request.auth.uid);
+        && resource.data.fromUser == request.auth.uid;
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.resource.data.fromUser == request.auth.uid;
+        && request.resource.data.fromUser == request.auth.uid
+        && request.resource.data.action in ['like', 'dislike'];
       allow update, delete: if false;
     }
 
@@ -144,13 +163,22 @@ service cloud.firestore {
     match /chats/{chatId} {
       allow read: if isActiveActor()
         && request.auth.uid in resource.data.participants;
+      // Chat creation requires a real, server-verified mutual match (both swipe
+      // docs are 'like'). This closes the unsolicited-chat / spam vector where a
+      // client could otherwise create a chat with anyone by listing itself.
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
         && request.auth.uid in request.resource.data.participants
-        && request.resource.data.participants.size() == 2;
+        && request.resource.data.participants.size() == 2
+        && hasMutualLike(request.auth.uid, otherParticipant(request.resource.data.participants));
+      // Participants are immutable, and only chat metadata may be updated — this
+      // blocks participant injection (adding a stranger) or removal (silencing).
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.auth.uid in resource.data.participants;
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastMessage', 'lastMessageAt', 'lastSenderId', 'reads']);
 
       match /messages/{messageId} {
         allow read: if isActiveActor()
@@ -158,7 +186,12 @@ service cloud.firestore {
         allow create: if request.auth != null
           && isActiveUser(request.auth.uid)
           && request.resource.data.senderId == request.auth.uid
-          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000
+          && request.resource.data.read == false
+          && request.resource.data.timestamp == request.time;
         allow update, delete: if false;
       }
     }
@@ -204,7 +237,9 @@ service cloud.firestore {
     }
 
     match /debug_logs/{logId} {
-      allow read: if true;
+      // Was world-readable (read: if true) — logs can carry UIDs/device/error
+      // details, so restrict reads to admins.
+      allow read: if isAdmin();
       allow create: if request.auth != null
         && request.resource.data.uid == request.auth.uid;
       allow update, delete: if false;

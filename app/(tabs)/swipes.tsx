@@ -68,17 +68,19 @@ export default function SwipesScreen() {
     await AsyncStorage.setItem('swipes_tutorial_seen', 'true');
   }, []);
 
-  // Load swipeable users
+  // Load swipeable users (re-runs when the applied filters change)
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+    setLoading(true);
 
     (async () => {
       try {
         const swipedIds = await getSwipedUserIds();
-        const swipeableUsers = await getSwipeableUsers(user.uid, swipedIds);
+        const swipeableUsers = await getSwipeableUsers(user.uid, swipedIds, 50, filters);
         if (!cancelled) {
           setUsers(swipeableUsers);
+          setCurrentIndex(0);
           setLoading(false);
         }
       } catch (err) {
@@ -88,7 +90,7 @@ export default function SwipesScreen() {
     })();
 
     return () => { cancelled = true; };
-  }, [user]);
+  }, [user, filters]);
 
   const handleSwipeComplete = useCallback(async (direction: 'like' | 'dislike') => {
     if (isSwiping.current) return;
@@ -152,16 +154,29 @@ export default function SwipesScreen() {
       }
     });
 
-  const handleSendMessage = useCallback(() => {
+  const handleSendMessage = useCallback(async () => {
+    // If the chat wasn't created at match time (a failure/race), retry now so the
+    // user isn't stranded. Keep the match modal visible during the retry rather
+    // than flashing a blank screen, and only navigate once we have a chat id.
+    let chatId = matchChatId;
+    if (!chatId && user && matchedUser) {
+      try {
+        const { createChatForMatch } = await import('../../src/services/chat');
+        chatId = await createChatForMatch(user.uid, matchedUser.uid);
+      } catch (err) {
+        console.error('[SwipesScreen] retry chat creation failed:', err);
+        Alert.alert('שגיאה', 'לא ניתן לפתוח את הצ\'אט כרגע. נסה שוב מתוך הצ\'אטים.');
+      }
+    }
     setShowMatch(false);
-    // Navigate to the specific chat conversation
-    if (matchChatId) {
-      router.push(`/(tabs)/chat/${matchChatId}`);
+    setMatchedUser(null);
+    setMatchChatId(null);
+    if (chatId) {
+      router.push(`/(tabs)/chat/${chatId}`);
     } else {
       router.push('/(tabs)/chat');
     }
-    setMatchChatId(null);
-  }, [router, matchChatId]);
+  }, [router, matchChatId, user, matchedUser]);
 
   const handleKeepSwiping = useCallback(() => {
     setShowMatch(false);

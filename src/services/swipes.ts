@@ -64,13 +64,47 @@ export async function getSwipedUserIds(): Promise<Set<string>> {
   return new Set(snapshot.docs.map(d => d.data().toUser));
 }
 
+export interface SwipeFilters {
+  genders: string[];
+  ageRange: [number, number];
+  relationshipTypes: string[];
+}
+
+function ageFromBirthday(birthday?: string): number | null {
+  if (!birthday) return null;
+  const bd = new Date(birthday);
+  if (isNaN(bd.getTime())) return null;
+  const today = new Date();
+  let a = today.getFullYear() - bd.getFullYear();
+  const m = today.getMonth() - bd.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) a--;
+  return a;
+}
+
+// Applies the user-selected swipe filters. Empty gender/relationship selections
+// mean "no restriction". A missing birthday is not filtered out on age (we don't
+// hide users just because a field is absent).
+function matchesFilters(u: UserProfile, f?: SwipeFilters): boolean {
+  if (!f) return true;
+  if (f.genders.length > 0 && (!u.gender || !f.genders.includes(u.gender))) return false;
+  if (f.relationshipTypes.length > 0) {
+    const urt = (u.relationshipType ?? []) as string[];
+    if (!urt.some(rt => f.relationshipTypes.includes(rt))) return false;
+  }
+  const age = ageFromBirthday(u.birthday);
+  if (age !== null && (age < f.ageRange[0] || age > f.ageRange[1])) return false;
+  return true;
+}
+
 // Returns only users who are co-registered with the current user to at least
 // one shared event. Both must be registered (status='registered') to the same
-// event for one to appear in the other's swipe deck.
+// event for one to appear in the other's swipe deck. Optional `filters` narrow
+// the deck by gender / age / relationship type.
 export async function getSwipeableUsers(
   currentUid: string,
   excludeIds: Set<string>,
-  maxResults = 50
+  maxResults = 50,
+  filters?: SwipeFilters
 ): Promise<UserProfile[]> {
   const authUid = auth.currentUser?.uid;
   if (!authUid || authUid !== currentUid) throw new Error('Unauthorized');
@@ -114,5 +148,6 @@ export async function getSwipeableUsers(
     .filter(docSnap => docSnap.exists())
     .map(docSnap => docSnap.data() as UserProfile)
     .filter(u => u.profileComplete && isActiveAccount(u.accountStatus))
+    .filter(u => matchesFilters(u, filters))
     .slice(0, maxResults);
 }

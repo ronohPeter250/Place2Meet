@@ -1,0 +1,70 @@
+// Firestore security-rules tests for the chat/match/swipe subsystem.
+// Run via:  firebase emulators:exec --only firestore "node scripts/test-rules.mjs"
+import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
+import { readFileSync } from 'node:fs';
+import {
+  doc, setDoc, updateDoc, getDoc, getDocs, collection, query, where, serverTimestamp,
+} from 'firebase/firestore';
+
+let passed = 0;
+async function ok(label, p) { await assertSucceeds(p); console.log('  PASS (allowed):', label); passed++; }
+async function no(label, p) { await assertFails(p);    console.log('  PASS (denied): ', label); passed++; }
+
+const testEnv = await initializeTestEnvironment({
+  projectId: 'place2meet-rules-test',
+  firestore: { rules: readFileSync('firestore.rules', 'utf8') },
+});
+
+// Seed users (active: users doc exists, no accountStatus => treated active).
+await testEnv.withSecurityRulesDisabled(async (ctx) => {
+  const db = ctx.firestore();
+  await setDoc(doc(db, 'users/A'), { name: 'A', profileComplete: true });
+  await setDoc(doc(db, 'users/B'), { name: 'B', profileComplete: true });
+  await setDoc(doc(db, 'users/C'), { name: 'C', profileComplete: true });
+});
+
+const A = testEnv.authenticatedContext('A').firestore();
+const B = testEnv.authenticatedContext('B').firestore();
+const C = testEnv.authenticatedContext('C').firestore();
+
+console.log('\n[swipes]');
+await ok('A creates own like swipe A->B', setDoc(doc(A, 'swipes/A_B'), { fromUser:'A', toUser:'B', action:'like', timestamp: serverTimestamp() }));
+await no('invalid action rejected', setDoc(doc(A, 'swipes/A_C'), { fromUser:'A', toUser:'C', action:'superlike', timestamp: serverTimestamp() }));
+await no('forged fromUser rejected', setDoc(doc(A, 'swipes/X_B'), { fromUser:'X', toUser:'B', action:'like', timestamp: serverTimestamp() }));
+// The disputed list rule: A querying its OWN swipes (where fromUser==A) must be ALLOWED.
+await ok('LIST swipes where fromUser==A (myth-check)', getDocs(query(collection(A, 'swipes'), where('fromUser','==','A'))));
+// Enumerating who liked ME (where toUser==A) must be DENIED.
+await no('LIST swipes where toUser==A denied', getDocs(query(collection(A, 'swipes'), where('toUser','==','A'))));
+
+console.log('\n[chats — mutual-match gate]');
+await no('chat create WITHOUT mutual match denied', setDoc(doc(A, 'chats/A_B'), { participants:['A','B'], lastMessage:'', lastMessageAt: serverTimestamp() }));
+await ok('B creates own like swipe B->A (now mutual)', setDoc(doc(B, 'swipes/B_A'), { fromUser:'B', toUser:'A', action:'like', timestamp: serverTimestamp() }));
+await ok('chat create WITH mutual match allowed', setDoc(doc(A, 'chats/A_B'), { participants:['A','B'], lastMessage:'', lastMessageAt: serverTimestamp() }));
+
+console.log('\n[chats — update field lock]');
+await ok('participant updates metadata', updateDoc(doc(A, 'chats/A_B'), { lastMessage:'hi', lastMessageAt: serverTimestamp() }));
+await no('participant injection (add C) denied', updateDoc(doc(A, 'chats/A_B'), { participants:['A','B','C'] }));
+await no('participant removal (silence B) denied', updateDoc(doc(A, 'chats/A_B'), { participants:['A'] }));
+await no('non-participant C reads chat denied', getDoc(doc(C, 'chats/A_B')));
+
+console.log('\n[messages]');
+await ok('participant sends valid message', setDoc(doc(A, 'chats/A_B/messages/m1'), { senderId:'A', text:'hello', read:false, timestamp: serverTimestamp() }));
+await no('empty message denied', setDoc(doc(A, 'chats/A_B/messages/m2'), { senderId:'A', text:'', read:false, timestamp: serverTimestamp() }));
+await no('spoofed senderId denied', setDoc(doc(A, 'chats/A_B/messages/m3'), { senderId:'B', text:'x', read:false, timestamp: serverTimestamp() }));
+await no('read:true on create denied', setDoc(doc(A, 'chats/A_B/messages/m4'), { senderId:'A', text:'x', read:true, timestamp: serverTimestamp() }));
+await no('non-participant C sends message denied', setDoc(doc(C, 'chats/A_B/messages/m5'), { senderId:'C', text:'x', read:false, timestamp: serverTimestamp() }));
+
+console.log('\n[message length — does rule size() count chars or bytes?]');
+const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
+try {
+  await assertSucceeds(setDoc(doc(A, 'chats/A_B/messages/mheb'), { senderId:'A', text: heavyHeb, read:false, timestamp: serverTimestamp() }));
+  console.log('  RESULT: size() counts CHARACTERS (1500 Hebrew chars accepted) -> client .length agrees, NO bug');
+} catch {
+  console.log('  RESULT: size() counts BYTES (1500 Hebrew chars = 3000 bytes REJECTED) -> client .length over-accepts, REAL bug');
+}
+
+console.log('\n[debug_logs]');
+await no('non-admin cannot read debug_logs', getDocs(collection(A, 'debug_logs')));
+
+await testEnv.cleanup();
+console.log(`\nALL RULES TESTS PASSED (${passed} assertions)`);
