@@ -53,9 +53,9 @@ yarn-error.*
 .dravix/
 .superpowers/
 
-# firebase local cache & logs
+# firebase local cache & logs / emulator logs
 .firebase/
-firebase-debug.log
+*-debug.log
 
 # build artifacts (too large for git / GitHub 100MB limit)
 *.apk
