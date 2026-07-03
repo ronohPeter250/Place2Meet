@@ -39,7 +39,7 @@ const styles = StyleSheet.create({
   sentBubble: { backgroundColor: colors.bubbleSent, borderBottomRightRadius: 0 },
   receivedBubble: { backgroundColor: colors.bubbleReceived, borderBottomLeftRadius: 0 },
   text: { fontFamily: 'Rubik_400Regular', fontSize: 14 },
-  sentText: { color: colors.white, textAlign: 'center' },
+  sentText: { color: colors.white, textAlign: 'right' },
   receivedText: { color: colors.text, textAlign: 'right' },
   time: { fontFamily: 'Rubik_400Regular', fontSize: 10, color: colors.textMuted, marginTop: 10 },
   timeSent: { textAlign: 'right' },

@@ -78,9 +78,9 @@ export default function VerifyScreen() {
     setErrorMessage('');
 
     try {
-      console.log('Verifying OTP with verificationId:', verificationId?.substring(0, 20), 'otp:', otp);
-      const verifiedUser = await verifyOTP(verificationId, otp);
-      console.log('OTP verified! User:', verifiedUser.uid);
+      // Never log the OTP code or verificationId — they end up in device logcat
+      // in release builds (a credential leak).
+      await verifyOTP(verificationId, otp);
       verifiedRef.current = true;
       clearPendingVerification();
       // AuthContext sets isLoading=true synchronously when onAuthStateChanged fires

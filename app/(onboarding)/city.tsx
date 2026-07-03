@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Header } from '../../src/components/layout/Header';
@@ -24,11 +24,15 @@ export default function CityScreen() {
     setLoading(true);
     try {
       await updateUserProfile(user.uid, { city: city.trim() });
+      router.push('/(onboarding)/gender');
     } catch (err) {
+      // Do NOT advance on a failed write — that would produce a "complete"
+      // profile with missing data. Keep the user here and let them retry.
       console.error('[CityScreen] city update failed:', err);
+      Alert.alert('שגיאה', 'לא ניתן לשמור כרגע. בדוק את החיבור ונסה שוב.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    router.push('/(onboarding)/gender');
   }, [city, user, loading, router]);
 
   return (

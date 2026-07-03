@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Header } from '../../src/components/layout/Header';
@@ -25,11 +25,13 @@ export default function AboutScreen() {
     setLoading(true);
     try {
       await updateUserProfile(user.uid, { bio: bio.trim() });
+      router.push('/(onboarding)/photos');
     } catch (err) {
       console.error('[AboutScreen] bio update failed:', err);
+      Alert.alert('שגיאה', 'לא ניתן לשמור כרגע. בדוק את החיבור ונסה שוב.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    router.push('/(onboarding)/photos');
   }, [bio, user, loading, router]);
 
   return (

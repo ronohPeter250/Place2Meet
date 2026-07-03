@@ -22,11 +22,16 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'users/A'), { name: 'A', profileComplete: true });
   await setDoc(doc(db, 'users/B'), { name: 'B', profileComplete: true });
   await setDoc(doc(db, 'users/C'), { name: 'C', profileComplete: true });
+  // D = a fully-filled profile (still incomplete flag); E = missing gender.
+  await setDoc(doc(db, 'users/D'), { name: 'D', gender: 'male', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
+  await setDoc(doc(db, 'users/E'), { name: 'E', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
 });
 
 const A = testEnv.authenticatedContext('A').firestore();
 const B = testEnv.authenticatedContext('B').firestore();
 const C = testEnv.authenticatedContext('C').firestore();
+const D = testEnv.authenticatedContext('D').firestore();
+const E = testEnv.authenticatedContext('E').firestore();
 
 console.log('\n[swipes]');
 await ok('A creates own like swipe A->B', setDoc(doc(A, 'swipes/A_B'), { fromUser:'A', toUser:'B', action:'like', timestamp: serverTimestamp() }));
@@ -66,6 +71,19 @@ const inMs = (ms) => Timestamp.fromDate(new Date(Date.now() + ms));
 await ok('valid checkin (now+4h)', setDoc(doc(A, 'checkins/A_v1'), { userId:'A', venueId:'v1', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000) }));
 await no('far-future expiresAt denied', setDoc(doc(A, 'checkins/A_v2'), { userId:'A', venueId:'v2', timestamp: serverTimestamp(), expiresAt: inMs(100*3600*1000) }));
 await no('past expiresAt denied', setDoc(doc(A, 'checkins/A_v3'), { userId:'A', venueId:'v3', timestamp: serverTimestamp(), expiresAt: inMs(-3600*1000) }));
+
+console.log('\n[R1 fixes — swipe id binding / checkins list / profileComplete / reads+metadata]');
+await no('forge reverse swipe (id B_A, fromUser A) denied', setDoc(doc(A, 'swipes/B_A'), { fromUser: 'A', toUser: 'B', action: 'like', timestamp: serverTimestamp() }));
+await no('self-swipe denied', setDoc(doc(A, 'swipes/A_A'), { fromUser: 'A', toUser: 'A', action: 'like', timestamp: serverTimestamp() }));
+await ok('A lists OWN checkins', getDocs(query(collection(A, 'checkins'), where('userId', '==', 'A'))));
+await no('venue-scoped checkin list (enumerate presence) denied', getDocs(query(collection(A, 'checkins'), where('venueId', '==', 'v1'))));
+await no('checkin with mismatched doc id denied', setDoc(doc(A, 'checkins/A_WRONG'), { userId: 'A', venueId: 'v9', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000) }));
+await ok('D flips profileComplete=true WITH all fields', updateDoc(doc(D, 'users/D'), { profileComplete: true }));
+await no('E flips profileComplete=true MISSING gender denied', updateDoc(doc(E, 'users/E'), { profileComplete: true }));
+await ok('A stamps OWN reads', updateDoc(doc(A, 'chats/A_B'), { ['reads.A']: serverTimestamp() }));
+await no('A stamps OTHER user reads denied', updateDoc(doc(A, 'chats/A_B'), { ['reads.B']: serverTimestamp() }));
+await no('forge lastSenderId as other user denied', updateDoc(doc(A, 'chats/A_B'), { lastSenderId: 'B', lastMessage: 'x', lastMessageAt: serverTimestamp() }));
+await ok('legit metadata update (own sender + server time)', updateDoc(doc(A, 'chats/A_B'), { lastSenderId: 'A', lastMessage: 'hi', lastMessageAt: serverTimestamp() }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

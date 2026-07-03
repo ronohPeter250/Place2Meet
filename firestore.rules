@@ -66,6 +66,7 @@ service cloud.firestore {
         && request.resource.data.get('attendeeIds', []).size() == resource.data.get('attendeeIds', []).size() + 1
         && request.resource.data.get('attendeeIds', []).hasAll(resource.data.get('attendeeIds', []))
         && request.resource.data.get('attendeeCount', 0) == resource.data.get('attendeeCount', 0) + 1
+        && request.resource.data.get('attendeeCount', 0) <= resource.data.get('capacity', 0)
         && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) + 1
         && otherAttendeeCountsUnchanged(gender);
     }
@@ -88,11 +89,24 @@ service cloud.firestore {
       allow create: if request.auth != null
         && request.auth.uid == userId
         && !request.resource.data.keys().hasAny(userAdminFields());
+      // A profile may only be marked profileComplete==true when the required
+      // fields are actually present — so a UI-bypassing client can't flip the flag
+      // and skip onboarding (name/gender/city/birthday/≥2 photos/prefs). Age>=18
+      // is validated client-side (rules can't parse a date string).
       allow update: if isAdmin()
         || (request.auth != null
           && request.auth.uid == userId
           && isActiveUser(userId)
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(userAdminFields()));
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(userAdminFields())
+          && (request.resource.data.get('profileComplete', false) != true || (
+               request.resource.data.name is string && request.resource.data.name.size() > 0
+               && request.resource.data.gender in ['male', 'female', 'other']
+               && request.resource.data.birthday is string && request.resource.data.birthday.size() > 0
+               && request.resource.data.city is string && request.resource.data.city.size() > 0
+               && request.resource.data.photos is list && request.resource.data.photos.size() >= 2
+               && request.resource.data.datingPreference is list
+               && request.resource.data.relationshipType is list
+             )));
       allow delete: if false;
 
       match /adminData/private {
@@ -130,12 +144,17 @@ service cloud.firestore {
     }
 
     match /checkins/{checkinId} {
-      allow read: if isActiveActor();
-      // expiresAt must be a server-plausible future time (not a forged far-future
-      // value that would keep a user "present" and inflate venue counts forever).
+      // A user may read a single checkin, but may only LIST their OWN — otherwise
+      // any active user could enumerate everyone's real-time physical presence.
+      allow get: if isActiveActor();
+      allow list: if isActiveActor() && resource.data.userId == request.auth.uid;
+      // Doc id is bound to uid_venueId (one active checkin per user+venue; blocks
+      // random-id spam), expiresAt must be a server-plausible near future, and
+      // venueId is immutable on update.
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
         && request.resource.data.userId == request.auth.uid
+        && checkinId == request.auth.uid + '_' + request.resource.data.venueId
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
@@ -143,6 +162,7 @@ service cloud.firestore {
         && isActiveUser(request.auth.uid)
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId == request.auth.uid
+        && request.resource.data.venueId == resource.data.venueId
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
@@ -162,10 +182,16 @@ service cloud.firestore {
       // targeted `get` (needed for match detection), just not enumeration.
       allow list: if isActiveActor()
         && resource.data.fromUser == request.auth.uid;
+      // Bind the doc id to fromUser_toUser and forbid self-swipes. Without the id
+      // binding, an attacker could create swipes/{victim}_{attacker} with their
+      // OWN fromUser, and hasMutualLike (which keys by doc id) would treat it as
+      // the victim's reciprocal like — forging an unsolicited match.
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
         && request.resource.data.fromUser == request.auth.uid
-        && request.resource.data.action in ['like', 'dislike'];
+        && request.resource.data.action in ['like', 'dislike']
+        && swipeId == request.resource.data.fromUser + '_' + request.resource.data.toUser
+        && request.resource.data.toUser != request.resource.data.fromUser;
       allow update, delete: if false;
     }
 
@@ -189,12 +215,22 @@ service cloud.firestore {
         && hasMutualLike(request.auth.uid, otherParticipant(request.resource.data.participants));
       // Participants are immutable, and only chat metadata may be updated — this
       // blocks participant injection (adding a stranger) or removal (silencing).
+      // Only chat metadata may change; participants are immutable. Additionally:
+      // a caller may only stamp its OWN reads.{uid} (not forge the other user's
+      // read status), lastSenderId can only be the caller (can't fake a message
+      // "from" the other user), and lastMessageAt must be the server clock.
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && request.auth.uid in resource.data.participants
         && request.resource.data.participants == resource.data.participants
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['lastMessage', 'lastMessageAt', 'lastSenderId', 'reads']);
+             .hasOnly(['lastMessage', 'lastMessageAt', 'lastSenderId', 'reads'])
+        && (!('reads' in request.resource.data.diff(resource.data).affectedKeys())
+            || request.resource.data.reads.diff(resource.data.get('reads', {})).affectedKeys().hasOnly([request.auth.uid]))
+        && (!('lastSenderId' in request.resource.data.diff(resource.data).affectedKeys())
+            || request.resource.data.lastSenderId == request.auth.uid)
+        && (!('lastMessageAt' in request.resource.data.diff(resource.data).affectedKeys())
+            || request.resource.data.lastMessageAt == request.time);
 
       match /messages/{messageId} {
         allow read: if isActiveActor()
@@ -226,6 +262,8 @@ service cloud.firestore {
       allow update: if request.auth != null && (
         (resource.data.createdBy == request.auth.uid
           && isActiveBusiness(request.auth.uid)
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.venueId == resource.data.venueId
           && !('attendeeCount' in request.resource.data.diff(resource.data).affectedKeys())
           && !('attendeeCounts' in request.resource.data.diff(resource.data).affectedKeys())
           && !('attendeeIds' in request.resource.data.diff(resource.data).affectedKeys()))
@@ -239,7 +277,10 @@ service cloud.firestore {
     }
 
     match /registrations/{regId} {
-      allow get: if isActiveActor();
+      // Scope get to the owner/admin — otherwise any active user could read any
+      // registration (userId, eventId, gender, status) by its guessable doc id.
+      allow get: if isActiveActor()
+        && (isAdmin() || resource.data.userId == request.auth.uid);
       allow list: if isActiveActor()
         && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null
@@ -268,8 +309,11 @@ service cloud.firestore {
 
     match /adminAuditLogs/{logId} {
       allow read: if isAdmin();
+      // Anchor audit entries to the acting admin and the server clock so the
+      // trail can't be back/forward-dated or attributed to another admin.
       allow create: if isAdmin()
-        && request.resource.data.adminId == request.auth.uid;
+        && request.resource.data.adminId == request.auth.uid
+        && request.resource.data.createdAt == request.time;
       allow update, delete: if false;
     }
 

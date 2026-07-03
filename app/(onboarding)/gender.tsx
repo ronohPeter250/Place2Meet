@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Header } from '../../src/components/layout/Header';
@@ -30,11 +30,13 @@ export default function GenderScreen() {
     setLoading(true);
     try {
       await updateUserProfile(user.uid, { gender });
+      router.push('/(onboarding)/dating-preference');
     } catch (err) {
       console.error('[GenderScreen] gender update failed:', err);
+      Alert.alert('שגיאה', 'לא ניתן לשמור כרגע. בדוק את החיבור ונסה שוב.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    router.push('/(onboarding)/dating-preference');
   }, [gender, user, loading, router]);
 
   return (

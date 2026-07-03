@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Header } from '../../src/components/layout/Header';
@@ -38,11 +38,13 @@ export default function DatingPreferenceScreen() {
     setLoading(true);
     try {
       await updateUserProfile(user.uid, { datingPreference: selected });
+      router.push('/(onboarding)/relationship-type');
     } catch (err) {
       console.error('[DatingPreferenceScreen] preference update failed:', err);
+      Alert.alert('שגיאה', 'לא ניתן לשמור כרגע. בדוק את החיבור ונסה שוב.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    router.push('/(onboarding)/relationship-type');
   }, [selected, user, loading, router]);
 
   return (

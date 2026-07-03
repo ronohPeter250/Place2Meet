@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Header } from '../../src/components/layout/Header';
@@ -39,11 +39,13 @@ export default function RelationshipTypeScreen() {
     setLoading(true);
     try {
       await updateUserProfile(user.uid, { relationshipType: selected });
+      router.push('/(onboarding)/about');
     } catch (err) {
       console.error('[RelationshipTypeScreen] relationship type update failed:', err);
+      Alert.alert('שגיאה', 'לא ניתן לשמור כרגע. בדוק את החיבור ונסה שוב.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-    router.push('/(onboarding)/about');
   }, [selected, user, loading, router]);
 
   return (
