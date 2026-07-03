@@ -94,7 +94,9 @@ const styles = StyleSheet.create({
     width: 0,
   },
   boxes: {
-    flexDirection: 'row-reverse',
+    // Numeric OTP must read left-to-right even in an RTL app; row-reverse
+    // rendered the first digit rightmost, so the code appeared reversed.
+    flexDirection: 'row',
     justifyContent: 'center',
     gap: spacing.lg,
   },
