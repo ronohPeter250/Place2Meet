@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Timestamp } from 'firebase/firestore';
+import { CachedImage } from './CachedImage';
 import { colors, borderRadius } from '../../theme';
 
 interface BusinessEventCardProps {
@@ -32,7 +33,7 @@ export const BusinessEventCard = React.memo(function BusinessEventCard({
     <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.imageSection}>
         {coverImage ? (
-          <Image source={{ uri: coverImage }} style={styles.coverImage} resizeMode="cover" />
+          <CachedImage uri={coverImage} style={styles.coverImage} />
         ) : (
           <View style={styles.coverPlaceholder} />
         )}

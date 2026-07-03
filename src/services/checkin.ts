@@ -98,14 +98,15 @@ export async function getVenueActiveCounts(
     new Set(snapshot.docs.map(d => (d.data() as { userId: string }).userId))
   );
 
-  const userDocs = await Promise.all(
+  // allSettled: one unreadable/missing user doc must not zero out the whole count.
+  const results = await Promise.allSettled(
     userIds.map(uid => getDoc(doc(db, 'users', uid)))
   );
 
   const counts = { male: 0, female: 0, other: 0 };
-  for (const userDoc of userDocs) {
-    if (!userDoc.exists()) continue;
-    const gender = (userDoc.data() as { gender?: 'male' | 'female' | 'other' }).gender;
+  for (const result of results) {
+    if (result.status !== 'fulfilled' || !result.value.exists()) continue;
+    const gender = (result.value.data() as { gender?: 'male' | 'female' | 'other' }).gender;
     if (gender === 'male') counts.male++;
     else if (gender === 'female') counts.female++;
     else counts.other++;

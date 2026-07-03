@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, Image, FlatList, TextInput, TouchableOpacity, StyleSheet,
+  View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
 } from 'react-native';
 import { SendIcon } from '../../../src/components/ui/SvgIcons';
+import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Timestamp, doc, getDoc } from 'firebase/firestore';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
@@ -263,7 +264,7 @@ export default function ChatConversationScreen() {
         rightElement={
           otherUserPhoto ? (
             <View style={styles.headerAvatarRing}>
-              <Image source={{ uri: otherUserPhoto }} style={styles.headerAvatar} />
+              <CachedImage uri={otherUserPhoto} style={styles.headerAvatar} />
             </View>
           ) : undefined
         }

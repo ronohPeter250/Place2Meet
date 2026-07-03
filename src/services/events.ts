@@ -134,12 +134,28 @@ export async function getVenueRegistrationCounts(): Promise<Map<string, number>>
 // Realtime variant: fires `onChange` immediately with current counts and again
 // whenever any event's attendeeCount changes — so the map badge stays live
 // without needing a screen remount/tab-switch. Returns an unsubscribe fn.
+function countMapsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  return true;
+}
+
 export function subscribeVenueRegistrationCounts(
   onChange: (counts: Map<string, number>) => void
 ): () => void {
+  // Scope to upcoming events only (past events never contribute to a badge), so
+  // the listener re-reads far fewer docs, and suppress no-op deliveries so the
+  // map doesn't re-render on unrelated event writes.
+  const q = query(collection(db, 'events'), where('dateTime', '>=', Timestamp.now()));
+  let prev: Map<string, number> | null = null;
   return onSnapshot(
-    collection(db, 'events'),
-    (snap) => onChange(tallyVenueCounts(snap.docs)),
+    q,
+    (snap) => {
+      const counts = tallyVenueCounts(snap.docs);
+      if (prev && countMapsEqual(prev, counts)) return;
+      prev = counts;
+      onChange(counts);
+    },
     (err) => console.error('[events] venue counts subscription failed:', err),
   );
 }

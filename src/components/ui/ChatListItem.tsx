@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Timestamp } from 'firebase/firestore';
+import { CachedImage } from './CachedImage';
 import { colors, typography } from '../../theme';
 
 interface ChatListItemProps {
@@ -25,7 +26,7 @@ export const ChatListItem = React.memo(function ChatListItem({
     <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.7}>
       <View style={styles.avatarRing}>
         {photo ? (
-          <Image source={{ uri: photo }} style={styles.avatarImage} />
+          <CachedImage uri={photo} style={styles.avatarImage} recyclingKey={photo} priority="high" />
         ) : (
           <View style={styles.avatarPlaceholder} />
         )}

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, Image, Modal, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { CachedImage } from './CachedImage';
 import { UserProfile } from '../../services/users';
 import { HeartBadgeIcon, HeartFloat1Icon, HeartFloat2Icon, HeartFloat3Icon } from './SvgIcons';
 import ConfettiSvg from '../../../assets/images/match_confetti.svg';
@@ -78,7 +79,7 @@ export const MatchModal = React.memo(function MatchModal({
             {/* Left photo (current user) - borderRadius 8 */}
             <View style={styles.photoLeft}>
               {currentUserPhoto ? (
-                <Image source={{ uri: currentUserPhoto }} style={styles.photoFill} />
+                <CachedImage uri={currentUserPhoto} style={styles.photoFill} />
               ) : (
                 <View style={styles.photoPlaceholder} />
               )}
@@ -92,7 +93,7 @@ export const MatchModal = React.memo(function MatchModal({
             {/* Right photo (matched user) - borderRadius 20, offset down */}
             <View style={styles.photoRight}>
               {matchedUser.photos?.[0] ? (
-                <Image source={{ uri: matchedUser.photos[0] }} style={styles.photoFill} />
+                <CachedImage uri={matchedUser.photos[0]} style={styles.photoFill} />
               ) : (
                 <View style={styles.photoPlaceholder} />
               )}

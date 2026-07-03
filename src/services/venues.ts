@@ -11,6 +11,7 @@ import {
   FieldValue,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { isActiveAccount } from '../admin/utils';
 
 export interface Venue {
   id: string;
@@ -106,7 +107,9 @@ export async function getBusinessesAsVenues(maxResults = 200): Promise<Venue[]> 
     .map(d => {
       const data = d.data() as Record<string, unknown>;
       const coords = data.coordinates as GeoPoint | undefined;
-      if (!coords) return null;
+      // Skip businesses without coordinates, and suspended/blocked ones (they
+      // must not linger on the map).
+      if (!coords || !isActiveAccount(data.accountStatus as never)) return null;
       const photos = (data.photos as string[] | undefined) ?? [];
       return {
         id: d.id,

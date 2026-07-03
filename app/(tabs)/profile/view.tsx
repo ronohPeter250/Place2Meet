@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { View, Text, Image, StyleSheet, ScrollView, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Dimensions } from 'react-native';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
+import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { Header } from '../../../src/components/layout/Header';
 import { Chip } from '../../../src/components/ui/Chip';
 import { LocationPinIcon } from '../../../src/components/ui/SvgIcons';
@@ -41,7 +42,7 @@ export default function ViewProfileScreen() {
         {/* Profile photo */}
         <View style={styles.photoSection}>
           {profile?.photos?.[0] ? (
-            <Image source={{ uri: profile.photos[0] }} style={styles.heroPhoto} resizeMode="cover" />
+            <CachedImage uri={profile.photos[0]} style={styles.heroPhoto} priority="high" />
           ) : (
             <View style={styles.photoPlaceholder}>
               <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.surfaceLight }} />

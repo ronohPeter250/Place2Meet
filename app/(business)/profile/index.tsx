@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { useRouter } from 'expo-router';
 import { doc, getDoc } from 'firebase/firestore';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
@@ -67,7 +68,7 @@ export default function BusinessProfileScreen() {
         <View style={styles.avatarSection}>
           <View style={styles.avatar}>
             {profilePhoto ? (
-              <Image source={{ uri: profilePhoto }} style={styles.avatarImage} />
+              <CachedImage uri={profilePhoto} style={styles.avatarImage} priority="high" />
             ) : (
               <View style={styles.avatarPlaceholder} />
             )}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
 import { Button } from '../../../src/components/ui/Button';
@@ -68,7 +69,7 @@ export default function ProfileScreen() {
         <View style={styles.avatarSection}>
           <View style={styles.avatar}>
             {profile?.photos?.[0] ? (
-              <Image source={{ uri: profile.photos[0] }} style={styles.avatarImage} />
+              <CachedImage uri={profile.photos[0]} style={styles.avatarImage} priority="high" />
             ) : (
               <View style={styles.avatarPlaceholder} />
             )}

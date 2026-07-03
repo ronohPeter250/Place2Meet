@@ -1,15 +1,23 @@
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 
-// Fire-and-forget logger that ships debug events to a Firestore collection so
-// we can analyse runtime behaviour without needing adb / logcat / device
-// access. Each event becomes one document under `debug_logs/{auto-id}` with
-// a timestamp, the firing scope (e.g. 'MAP'), the human-readable message, and
-// any structured payload. Failures are swallowed — we never want diagnostic
-// instrumentation to crash the user's session.
+// Remote (Firestore) logging is OFF in production. It ships to Firestore ONLY in
+// a dev build, or when explicitly opted in via EXPO_PUBLIC_DEBUG_LOGS=1 (e.g. to
+// debug a release build). This prevents hundreds of Firestore writes per session
+// (the map alone fires ~28× incl. on every pan/render) and avoids logging UIDs /
+// data to a collection in production.
+const REMOTE_LOGS_ENABLED =
+  (typeof __DEV__ !== 'undefined' && __DEV__) ||
+  process.env.EXPO_PUBLIC_DEBUG_LOGS === '1';
+
+// Fire-and-forget logger. Always mirrors to the console; ships to the Firestore
+// `debug_logs` collection only when REMOTE_LOGS_ENABLED. Failures are swallowed —
+// diagnostic instrumentation must never crash the user's session.
 export function debugLog(scope: string, message: string, payload?: unknown): void {
   // Mirror to console for adb-level access too
   try { console.log(`[${scope}]`, message, payload ?? ''); } catch {}
+
+  if (!REMOTE_LOGS_ENABLED) return;
 
   try {
     void addDoc(collection(db, 'debug_logs'), {

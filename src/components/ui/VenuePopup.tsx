@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, Image, Modal, ScrollView, StyleSheet, TouchableOpacity,
+  View, Text, Modal, ScrollView, StyleSheet, TouchableOpacity,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CachedImage } from './CachedImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Button } from './Button';
@@ -79,7 +80,7 @@ export const VenuePopup = React.memo(function VenuePopup({
           {/* Hero image with gradient */}
           {venue.photos?.[0] ? (
             <View style={styles.heroSection}>
-              <Image source={{ uri: venue.photos[0] }} style={styles.heroImage} resizeMode="cover" />
+              <CachedImage uri={venue.photos[0]} style={styles.heroImage} />
               <LinearGradient
                 colors={['transparent', 'rgba(35,32,30,0)', colors.surface]}
                 locations={[0, 0.69, 1]}
@@ -104,7 +105,7 @@ export const VenuePopup = React.memo(function VenuePopup({
                   <Text style={styles.venueAddress}>{venue.address}</Text>
                 </View>
                 {venue.photos?.[1] ? (
-                  <Image source={{ uri: venue.photos[1] }} style={styles.venueAvatar} />
+                  <CachedImage uri={venue.photos[1]} style={styles.venueAvatar} />
                 ) : null}
                 <View style={styles.distanceBadge}>
                   <Text style={styles.distanceBadgeText}>{totalActive}</Text>

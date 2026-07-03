@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, Image, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { LocationPinIcon } from './SvgIcons';
+import { CachedImage } from './CachedImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useAnimatedStyle,
@@ -74,7 +75,7 @@ export const SwipeCard = React.memo(function SwipeCard({
       {/* Photo */}
       <View style={styles.photoContainer}>
         {user.photos && user.photos.length > 0 ? (
-          <Image source={{ uri: user.photos[0] }} style={styles.photo} resizeMode="cover" />
+          <CachedImage uri={user.photos[0]} style={styles.photo} priority="high" />
         ) : (
           <View style={styles.photoPlaceholder} />
         )}

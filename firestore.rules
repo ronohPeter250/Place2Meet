@@ -100,6 +100,14 @@ service cloud.firestore {
       }
     }
 
+    // Precise per-user GPS coordinates — readable ONLY by the owner or an admin,
+    // written only by the owner. Kept out of the public users doc so no one can
+    // track another user's real-time location.
+    match /user_locations/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
     match /businesses/{businessId} {
       allow read: if isAdmin() || (request.auth != null && (request.auth.uid == businessId || isActiveActor()));
       allow create: if isAdmin()
@@ -123,13 +131,21 @@ service cloud.firestore {
 
     match /checkins/{checkinId} {
       allow read: if isActiveActor();
+      // expiresAt must be a server-plausible future time (not a forged far-future
+      // value that would keep a user "present" and inflate venue counts forever).
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.resource.data.userId == request.auth.uid;
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && resource.data.userId == request.auth.uid
-        && request.resource.data.userId == request.auth.uid;
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
       allow delete: if request.auth != null
         && isActiveUser(request.auth.uid)
         && resource.data.userId == request.auth.uid;

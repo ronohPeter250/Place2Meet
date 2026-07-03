@@ -79,7 +79,7 @@ function VenueCapture({ venue, count, onCaptured }: {
       } catch (err) {
         capturing.current = false;
         debugLog('MAP', 'VenueCapture FAILED', { id: venue.id, error: String(err) });
-        if (mounted.current && retries.current < 3) { retries.current += 1; scheduleRef.current(); }
+        if (mounted.current && retries.current < 5) { retries.current += 1; scheduleRef.current(); }
       }
     })();
   }, [venue.id, onCaptured]);
@@ -87,7 +87,9 @@ function VenueCapture({ venue, count, onCaptured }: {
   const runRef = useRef(run); runRef.current = run;
   const schedule = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => runRef.current(), 150);
+    // Exponential backoff on repeated failures (a cold layout race can fail the
+    // first few captures within a tight window) — 150ms → 2s cap.
+    timer.current = setTimeout(() => runRef.current(), Math.min(150 * 2 ** retries.current, 2000));
   }, []);
   const scheduleRef = useRef(schedule); scheduleRef.current = schedule;
 
@@ -159,7 +161,7 @@ function UserCapture({ photo, onCaptured }: { photo?: string; onCaptured: (uri: 
       } catch (err) {
         capturing.current = false;
         debugLog('MAP', 'UserCapture FAILED', { error: String(err) });
-        if (mounted.current && retries.current < 3) { retries.current += 1; scheduleRef.current(); }
+        if (mounted.current && retries.current < 5) { retries.current += 1; scheduleRef.current(); }
       }
     })();
   }, [onCaptured]);
@@ -167,7 +169,9 @@ function UserCapture({ photo, onCaptured }: { photo?: string; onCaptured: (uri: 
   const runRef = useRef(run); runRef.current = run;
   const schedule = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => runRef.current(), 150);
+    // Exponential backoff on repeated failures (a cold layout race can fail the
+    // first few captures within a tight window) — 150ms → 2s cap.
+    timer.current = setTimeout(() => runRef.current(), Math.min(150 * 2 ** retries.current, 2000));
   }, []);
   const scheduleRef = useRef(schedule); scheduleRef.current = schedule;
 
@@ -226,6 +230,8 @@ export default function MapScreen() {
   const [nudge, setNudge] = useState(0);
   const mounted = useRef(true);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pngNudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocWrite = useRef<string | null>(null);
 
   useEffect(() => {
     mounted.current = true;
@@ -233,6 +239,7 @@ export default function MapScreen() {
     return () => {
       mounted.current = false;
       if (nudgeTimer.current) clearTimeout(nudgeTimer.current);
+      if (pngNudgeTimer.current) clearTimeout(pngNudgeTimer.current);
       debugLog('MAP', '=== MapScreen UNMOUNTED ===');
     };
   }, []);
@@ -308,6 +315,11 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (user && latitude != null && longitude != null && !locationLoading) {
+      // Skip redundant writes (e.g. when `user` gets a new reference on a token
+      // refresh but the coordinates are unchanged).
+      const key = `${user.uid}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`;
+      if (lastLocWrite.current === key) return;
+      lastLocWrite.current = key;
       updateUserLocation(user.uid, latitude, longitude).catch((err) => debugLog('MAP', 'location update failed', { error: String(err) }));
     }
   }, [user, latitude, longitude, locationLoading]);
@@ -315,7 +327,12 @@ export default function MapScreen() {
   // Whenever a new marker png arrives, nudge the map so it re-rasterises and
   // the freshly-added marker actually paints on first entry.
   useEffect(() => {
-    if (userPng || venuePng.size > 0) doNudge('png-arrived');
+    if (!userPng && venuePng.size === 0) return;
+    // Debounce: coalesce a burst of marker-png arrivals into ONE nudge instead of
+    // nudging (and re-rendering) once per captured marker.
+    if (pngNudgeTimer.current) clearTimeout(pngNudgeTimer.current);
+    pngNudgeTimer.current = setTimeout(() => doNudge('png-arrived'), 200);
+    return () => { if (pngNudgeTimer.current) clearTimeout(pngNudgeTimer.current); };
   }, [userPng, venuePng, doNudge]);
 
   const handleMarkerPress = useCallback((venue: Venue) => { setSelectedVenue(venue); setShowVenuePopup(true); }, []);

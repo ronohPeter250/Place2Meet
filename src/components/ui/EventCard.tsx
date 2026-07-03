@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { GenderOtherSmallIcon, GenderFemaleSmallIcon, GenderMaleSmallIcon } from './SvgIcons';
+import { CachedImage } from './CachedImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Timestamp } from 'firebase/firestore';
 import { colors } from '../../theme';
@@ -43,7 +44,7 @@ export const EventCard = React.memo(function EventCard({
       {/* Cover image with gradient overlay and date badge */}
       <View style={styles.imageSection}>
         {coverImage ? (
-          <Image source={{ uri: coverImage }} style={styles.coverImage} resizeMode="cover" />
+          <CachedImage uri={coverImage} style={styles.coverImage} />
         ) : (
           <View style={styles.coverPlaceholder} />
         )}
@@ -64,7 +65,7 @@ export const EventCard = React.memo(function EventCard({
         {/* Venue row with avatar (above title per Figma) */}
         <View style={styles.venueRowOuter}>
           {venueImage ? (
-            <Image source={{ uri: venueImage }} style={styles.venueAvatar} />
+            <CachedImage uri={venueImage} style={styles.venueAvatar} />
           ) : (
             <View style={styles.venueAvatarPlaceholder} />
           )}

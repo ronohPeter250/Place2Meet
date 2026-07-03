@@ -4,6 +4,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { readFileSync } from 'node:fs';
 import {
   doc, setDoc, updateDoc, getDoc, getDocs, collection, query, where, serverTimestamp,
+  GeoPoint, Timestamp,
 } from 'firebase/firestore';
 
 let passed = 0;
@@ -53,6 +54,18 @@ await no('empty message denied', setDoc(doc(A, 'chats/A_B/messages/m2'), { sende
 await no('spoofed senderId denied', setDoc(doc(A, 'chats/A_B/messages/m3'), { senderId:'B', text:'x', read:false, timestamp: serverTimestamp() }));
 await no('read:true on create denied', setDoc(doc(A, 'chats/A_B/messages/m4'), { senderId:'A', text:'x', read:true, timestamp: serverTimestamp() }));
 await no('non-participant C sends message denied', setDoc(doc(C, 'chats/A_B/messages/m5'), { senderId:'C', text:'x', read:false, timestamp: serverTimestamp() }));
+
+console.log('\n[user_locations — private per-user GPS]');
+await ok('A writes own location', setDoc(doc(A, 'user_locations/A'), { location: new GeoPoint(32, 34), updatedAt: serverTimestamp() }));
+await ok('A reads own location', getDoc(doc(A, 'user_locations/A')));
+await no('B cannot read A location', getDoc(doc(B, 'user_locations/A')));
+await no('A cannot write B location', setDoc(doc(A, 'user_locations/B'), { location: new GeoPoint(1, 1), updatedAt: serverTimestamp() }));
+
+console.log('\n[checkins — expiresAt validation]');
+const inMs = (ms) => Timestamp.fromDate(new Date(Date.now() + ms));
+await ok('valid checkin (now+4h)', setDoc(doc(A, 'checkins/A_v1'), { userId:'A', venueId:'v1', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000) }));
+await no('far-future expiresAt denied', setDoc(doc(A, 'checkins/A_v2'), { userId:'A', venueId:'v2', timestamp: serverTimestamp(), expiresAt: inMs(100*3600*1000) }));
+await no('past expiresAt denied', setDoc(doc(A, 'checkins/A_v3'), { userId:'A', venueId:'v3', timestamp: serverTimestamp(), expiresAt: inMs(-3600*1000) }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

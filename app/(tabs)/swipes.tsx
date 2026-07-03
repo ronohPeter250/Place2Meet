@@ -17,6 +17,7 @@ import { FilterModal, FilterValues } from '../../src/components/ui/FilterModal';
 import { RadarAnimation } from '../../src/components/ui/RadarAnimation';
 import { SearchIcon, FilterIcon, SwipeLeftArrowIcon, SwipeRightArrowIcon, HandPointingIcon } from '../../src/components/ui/SvgIcons';
 import { createSwipe, getSwipedUserIds, getSwipeableUsers } from '../../src/services/swipes';
+import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { UserProfile } from '../../src/services/users';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { colors, typography, spacing } from '../../src/theme';
@@ -50,7 +51,10 @@ export default function SwipesScreen() {
       try {
         const { getUserProfile } = await import('../../src/services/users');
         const profile = await getUserProfile(user.uid);
-        if (!cancelled) setMyPhoto(profile?.photos?.[0]);
+        if (!cancelled) {
+          setMyPhoto(profile?.photos?.[0]);
+          prefetchImages([profile?.photos?.[0]]); // warm own photo for the match modal
+        }
       } catch (err) { console.error('[SwipesScreen] photo fetch failed:', err); }
     })();
     return () => { cancelled = true; };
@@ -82,6 +86,8 @@ export default function SwipesScreen() {
           setUsers(swipeableUsers);
           setCurrentIndex(0);
           setLoading(false);
+          // Warm the disk cache for the first few cards so they appear instantly.
+          prefetchImages(swipeableUsers.slice(0, 3).map(u => u.photos?.[0]));
         }
       } catch (err) {
         console.error('[SwipesScreen] users fetch failed:', err);

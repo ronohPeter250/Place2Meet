@@ -27,7 +27,6 @@ export interface UserProfile {
   birthday: string;
   photos: string[];
   profileComplete: boolean;
-  location?: GeoPoint;
   lastActive?: Timestamp | FieldValue;
   createdAt?: Timestamp | FieldValue;
   accountStatus?: AccountStatus;
@@ -151,8 +150,15 @@ export async function updateUserLocation(
     throw new Error('Invalid coordinates');
   }
 
-  await updateDoc(doc(db, 'users', uid), {
+  // Precise coordinates go to a SEPARATE, self-readable collection — never on the
+  // public users doc (readable by any active user) — so a user's real-time GPS is
+  // not exposed to others (a stalking vector for a dating app). Only lastActive
+  // (a low-sensitivity presence timestamp) stays on the profile.
+  await setDoc(doc(db, 'user_locations', uid), {
     location: new GeoPoint(latitude, longitude),
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+  await updateDoc(doc(db, 'users', uid), {
     lastActive: serverTimestamp(),
   });
 }
