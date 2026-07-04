@@ -37,6 +37,7 @@ export default function EventsScreen() {
   const [venueCoords, setVenueCoords] = useState<Map<string, Coords>>(new Map());
   const [locating, setLocating] = useState(false);
   const [registeredIds, setRegisteredIds] = useState<Set<string>>(new Set());
+  const [error, setError] = useState(false);
   const locatingRef = useRef(false);
 
   // Reload on every focus so counts (and which events you're registered to)
@@ -53,9 +54,11 @@ export default function EventsScreen() {
           if (!cancelled) {
             setEvents(data);
             setRegisteredIds(new Set(regIds));
+            setError(false);
           }
         } catch (err) {
           console.error('[EventsScreen] events fetch failed:', err);
+          if (!cancelled) setError(true);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -203,6 +206,11 @@ export default function EventsScreen() {
       {loading ? (
         <View style={styles.emptyContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : error && events.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTitle}>שגיאה בטעינת האירועים</Text>
+          <Text style={styles.emptySubtext}>בדוק את החיבור לאינטרנט ונסה שוב.</Text>
         </View>
       ) : events.length === 0 ? (
         <View style={styles.emptyContainer}>
