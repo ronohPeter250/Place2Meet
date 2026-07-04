@@ -62,7 +62,14 @@ export async function getEvents(maxResults = 50): Promise<AppEvent[]> {
 
 export async function getEventsByCreator(creatorUid: string): Promise<AppEvent[]> {
   const eventsRef = collection(db, 'events');
-  const q = query(eventsRef, where('createdBy', '==', creatorUid), orderBy('dateTime', 'asc'));
+  // Only upcoming events — the business screen labels this list "אירועים קרובים"
+  // and past events were sorting to the top of it.
+  const q = query(
+    eventsRef,
+    where('createdBy', '==', creatorUid),
+    where('dateTime', '>=', Timestamp.now()),
+    orderBy('dateTime', 'asc'),
+  );
   const snapshot = await getDocs(q);
   return snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as AppEvent[];
 }
@@ -237,6 +244,11 @@ export async function updateEvent(
     const newCap = (data as { capacity?: number }).capacity;
     if (typeof newCap === 'number' && newCap < (current?.attendeeCount ?? 0)) {
       throw new Error('Capacity below current attendees');
+    }
+    // Can't move the event into the past (would strand registrations).
+    const newDate = (data as { dateTime?: Timestamp }).dateTime;
+    if (newDate?.toMillis && newDate.toMillis() <= Date.now()) {
+      throw new Error('Event date must be in the future');
     }
     tx.update(eventRef, data);
   });

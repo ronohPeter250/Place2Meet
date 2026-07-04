@@ -99,7 +99,7 @@ export default function BusinessPhotosScreen() {
     } finally {
       setLoading(false);
     }
-  }, [photos, user, loading, router, refreshProfile]);
+  }, [photos, logo, user, loading, router, refreshProfile]);
 
   return (
     <ScreenWrapper>

@@ -103,7 +103,7 @@ export default function NewEventScreen() {
       return;
     }
 
-    if (!isEditMode && eventDate <= new Date()) {
+    if (eventDate <= new Date()) {
       Alert.alert('שגיאה', 'תאריך האירוע חייב להיות בעתיד');
       return;
     }

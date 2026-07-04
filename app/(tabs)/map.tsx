@@ -324,11 +324,14 @@ export default function MapScreen() {
       // refresh but the coordinates are unchanged).
       const key = `${user.uid}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`;
       if (lastLocWrite.current === key) return;
-      // Record the key only AFTER the write succeeds — otherwise a failed write
-      // is never retried and the user goes stale/invisible on the map.
+      // Dedup immediately so a re-render mid-flight doesn't fire a duplicate write,
+      // but clear the key on failure so a same-coordinate retry can still happen.
+      lastLocWrite.current = key;
       updateUserLocation(user.uid, latitude, longitude)
-        .then(() => { lastLocWrite.current = key; })
-        .catch((err) => debugLog('MAP', 'location update failed', { error: String(err) }));
+        .catch((err) => {
+          lastLocWrite.current = null;
+          debugLog('MAP', 'location update failed', { error: String(err) });
+        });
     }
   }, [user, latitude, longitude, locationLoading]);
 

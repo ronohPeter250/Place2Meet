@@ -192,6 +192,11 @@ console.log('\n[R7 fix — event capacity floor server-side]');
 await no('business lowers capacity below attendeeCount denied', updateDoc(doc(BIZ, 'events/E2'), { capacity: 0 }));
 await ok('business raises capacity allowed', updateDoc(doc(BIZ, 'events/E2'), { capacity: 5 }));
 
+console.log('\n[R8 fix — event date not into past / message key whitelist]');
+await no('business moves event date to the past denied', updateDoc(doc(BIZ, 'events/E1'), { dateTime: inMs(-86400000) }));
+await ok('business moves event date to the future allowed', updateDoc(doc(BIZ, 'events/E1'), { dateTime: inMs(86400000) }));
+await no('message with extra field denied', setDoc(doc(A, 'chats/A_B/messages/mx'), { senderId: 'A', text: 'hi', read: false, timestamp: serverTimestamp(), extra: 'x' }));
+
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
 try {

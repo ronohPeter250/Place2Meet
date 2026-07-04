@@ -353,7 +353,8 @@ service cloud.firestore {
           && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 2000
           && request.resource.data.read == false
-          && request.resource.data.timestamp == request.time;
+          && request.resource.data.timestamp == request.time
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'read', 'timestamp']);
         allow update, delete: if false;
       }
     }
@@ -380,7 +381,11 @@ service cloud.firestore {
           // Capacity can never drop below people already registered — enforced
           // against the pre-write attendeeCount so a concurrent join can't slip
           // through the client-side check.
-          && request.resource.data.get('capacity', 0) >= resource.data.get('attendeeCount', 0))
+          && request.resource.data.get('capacity', 0) >= resource.data.get('attendeeCount', 0)
+          // dateTime can't be moved into the past — that would hide the event from
+          // every user surface while leaving registrations stranded (no leave path).
+          && (!('dateTime' in request.resource.data.diff(resource.data).affectedKeys())
+              || request.resource.data.dateTime > request.time))
         ||
         (isActiveUser(request.auth.uid)
           && request.resource.data.diff(resource.data).affectedKeys()
