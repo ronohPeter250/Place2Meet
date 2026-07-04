@@ -64,7 +64,8 @@
         "messagingSenderId": "879886850695",
         "appId": "1:879886850695:web:7a68b0140251492df97622"
       },
-      "googleMapsApiKey": "AIzaSyAtIQnOz8EpLSo7XiYOwxf2O4iJp1ByZFg"
+      "googleMapsApiKey": "AIzaSyAtIQnOz8EpLSo7XiYOwxf2O4iJp1ByZFg",
+      "googleMapId": "ca3121cfa7af6141a6113913"
     },
     "web": {
       "output": "single",

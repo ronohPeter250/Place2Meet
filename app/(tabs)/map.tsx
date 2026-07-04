@@ -30,9 +30,14 @@ import { useAuth } from '../../src/contexts/AuthContext';
 import { LocationPinIcon, FilterIcon } from '../../src/components/ui/SvgIcons';
 import { darkMapStyle } from '../../src/constants/mapStyle';
 import { colors } from '../../src/theme';
+import Constants from 'expo-constants';
 
 const DEFAULT_FILTERS: FilterValues = { genders: [], ageRange: [18, 25], relationshipTypes: [] };
-const GOOGLE_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAP_ID;
+// Prefer the inlined env var (local builds); fall back to app.json `extra` so a
+// cloud/EAS build — which has no gitignored .env — still gets the cloud Map ID.
+const GOOGLE_MAP_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_MAP_ID ??
+  (Constants.expoConfig?.extra?.googleMapId as string | undefined);
 
 const VENUE_W = 40;
 const VENUE_H = 66;
