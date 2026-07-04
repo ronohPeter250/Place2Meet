@@ -161,11 +161,11 @@ export default function ChatConversationScreen() {
     // moves strictly further back, so pagination advances on every press.
     const boundary = earlierMessages.length > 0 ? earlierMessages[0] : messages[0];
     const before = boundary?.timestamp as Timestamp | undefined;
-    if (!before?.toMillis) return;
+    if (!before?.toMillis || !boundary?.id) return;
 
     setLoadingEarlier(true);
     try {
-      const older = await fetchEarlierMessages(chatId, before, PAGE_SIZE);
+      const older = await fetchEarlierMessages(chatId, before, boundary.id, PAGE_SIZE);
       if (older.length === 0) {
         setHasMoreEarlier(false);
       } else {

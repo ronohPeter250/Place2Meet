@@ -8,6 +8,7 @@ import {
   serverTimestamp,
   limitToLast,
   endBefore,
+  documentId,
   getDoc,
   getDocs,
   updateDoc,
@@ -87,20 +88,27 @@ export function subscribeToMessages(
 }
 
 /**
- * Fetch a page of messages OLDER than `before` (an existing message's resolved
- * timestamp), newest-first internally then returned oldest-first. Used for
- * "load earlier" history pagination. Returns [] when there is nothing older.
+ * Fetch a page of messages OLDER than the boundary message (its resolved
+ * timestamp + id), returned oldest-first. Used for "load earlier" pagination.
+ * Returns [] when there is nothing older.
+ *
+ * The cursor is COMPOSITE (timestamp, documentId) so it excludes exactly the one
+ * boundary document — a bare value cursor on timestamp alone would skip every
+ * message sharing the boundary's exact timestamp, silently dropping them from
+ * scrollback.
  */
 export async function fetchEarlierMessages(
   chatId: string,
   before: Timestamp,
+  beforeId: string,
   pageSize = 50
 ): Promise<Message[]> {
   const messagesRef = collection(db, 'chats', chatId, 'messages');
   const q = query(
     messagesRef,
     orderBy('timestamp', 'asc'),
-    endBefore(before),
+    orderBy(documentId(), 'asc'),
+    endBefore(before, beforeId),
     limitToLast(pageSize)
   );
   const snap = await getDocs(q);
