@@ -6,6 +6,7 @@ import { AdminShell } from '../../../src/admin/components/AdminShell';
 import { BusinessForm } from '../../../src/admin/components/BusinessForm';
 import { getBusinessForAdmin } from '../../../src/admin/services';
 import { BusinessProfile } from '../../../src/services/business';
+import { colors } from '../../../src/theme';
 
 export default function EditBusinessScreen() {
   const { businessId } = useLocalSearchParams<{ businessId: string }>();
@@ -20,9 +21,9 @@ export default function EditBusinessScreen() {
   return (
     <AdminShell title="עריכת עסק">
       {business === undefined ? (
-        <AdminCard><Text>טוען...</Text></AdminCard>
+        <AdminCard><Text style={{ color: colors.text }}>טוען...</Text></AdminCard>
       ) : business === null ? (
-        <AdminCard><Text>העסק לא נמצא</Text></AdminCard>
+        <AdminCard><Text style={{ color: colors.text }}>העסק לא נמצא</Text></AdminCard>
       ) : (
         <BusinessForm initialBusiness={business} onSaved={(id) => router.replace(`/admin/businesses/${id}`)} />
       )}

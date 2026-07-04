@@ -94,6 +94,9 @@ service cloud.firestore {
         && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) + 1
         // Defense-in-depth: only a known gender bucket may be incremented.
         && gender in ['male', 'female', 'other']
+        // The attendeeCounts map may hold ONLY the three known buckets — a joiner
+        // can't inject arbitrary keys into the business's event doc.
+        && request.resource.data.get('attendeeCounts', {}).keys().hasOnly(['male', 'female', 'other'])
         && otherAttendeeCountsUnchanged(gender);
     }
 
@@ -107,6 +110,8 @@ service cloud.firestore {
         && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) - 1
         // Defense-in-depth: a per-gender bucket can never be driven below zero.
         && request.resource.data.get('attendeeCounts', {}).get(gender, 0) >= 0
+        // Only the three known buckets — no foreign-key injection on leave either.
+        && request.resource.data.get('attendeeCounts', {}).keys().hasOnly(['male', 'female', 'other'])
         && otherAttendeeCountsUnchanged(gender);
     }
 
@@ -473,7 +478,12 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.resource.data.uid == request.auth.uid;
+        && request.resource.data.uid == request.auth.uid
+        // Whitelist fields + cap sizes so an active user can't flood the collection
+        // with arbitrary/oversized documents.
+        && request.resource.data.keys().hasOnly(['scope', 'message', 'payload', 'uid', 'timestamp'])
+        && (!('message' in request.resource.data) || (request.resource.data.message is string && request.resource.data.message.size() <= 2000))
+        && (!('scope' in request.resource.data) || (request.resource.data.scope is string && request.resource.data.scope.size() <= 200));
       allow update, delete: if false;
     }
 

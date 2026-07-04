@@ -132,6 +132,11 @@ const capBatch = writeBatch(A);
 capBatch.set(doc(A, 'registrations/A_E2'), { userId: 'A', eventId: 'E2', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
 capBatch.update(doc(A, 'events/E2'), { attendeeCount: 2, attendeeIds: ['X', 'A'], 'attendeeCounts.male': 2 });
 await no('join past capacity denied', capBatch.commit());
+// R21 fix — a joiner can't inject foreign keys into the event's attendeeCounts map.
+const junkBatch = writeBatch(A);
+junkBatch.set(doc(A, 'registrations/A_E1'), { userId: 'A', eventId: 'E1', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
+junkBatch.update(doc(A, 'events/E1'), { attendeeCount: 1, attendeeIds: ['A'], attendeeCounts: { male: 1, female: 0, other: 0, hacker: 9999 } });
+await no('join with junk attendeeCounts key denied', junkBatch.commit());
 
 console.log('\n[R2 fixes — profileComplete transition / checkin owner-list / genderField immutability]');
 // Editing an already-complete profile is NOT re-validated (D is complete from above).
@@ -237,6 +242,8 @@ try {
 
 console.log('\n[debug_logs]');
 await no('non-admin cannot read debug_logs', getDocs(collection(A, 'debug_logs')));
+await ok('debug_logs create with whitelisted fields allowed', setDoc(doc(A, 'debug_logs/dl1'), { scope: 's', message: 'm', payload: {}, uid: 'A', timestamp: serverTimestamp() }));
+await no('debug_logs create with extra field denied', setDoc(doc(A, 'debug_logs/dl2'), { scope: 's', message: 'm', uid: 'A', timestamp: serverTimestamp(), evil: 'x' }));
 
 await testEnv.cleanup();
 console.log(`\nALL RULES TESTS PASSED (${passed} assertions)`);

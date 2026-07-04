@@ -127,6 +127,19 @@ export default function EditBusinessProfileScreen() {
 
     setSaving(true);
     try {
+      // Validate the address selection BEFORE any Storage upload — otherwise a
+      // bail-out here orphans the freshly-uploaded photos (and mints a new orphan
+      // on every retry, since each upload stamps a fresh path).
+      const addressChanged = trimmedLocation !== originalLocation;
+      if (addressChanged && !selectedPlace) {
+        Alert.alert(
+          'בחר כתובת מהרשימה',
+          'שינית את הכתובת — בחר את הכתובת החדשה מההצעות כדי לוודא שהיא קיימת על המפה.'
+        );
+        setSaving(false);
+        return;
+      }
+
       // Upload new local photos, keep existing URLs
       const storagePaths = await Promise.all(
         photos.map(async (uri, index) => {
@@ -139,16 +152,6 @@ export default function EditBusinessProfileScreen() {
       const downloadUrls = await Promise.all(
         storagePaths.map(p => (p.startsWith('http') ? p : getPhotoURL(p)))
       );
-
-      const addressChanged = trimmedLocation !== originalLocation;
-      if (addressChanged && !selectedPlace) {
-        Alert.alert(
-          'בחר כתובת מהרשימה',
-          'שינית את הכתובת — בחר את הכתובת החדשה מההצעות כדי לוודא שהיא קיימת על המפה.'
-        );
-        setSaving(false);
-        return;
-      }
 
       const updates: Parameters<typeof updateBusinessProfile>[1] = {
         businessName: trimmedName,
