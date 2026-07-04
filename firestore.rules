@@ -269,6 +269,7 @@ service cloud.firestore {
       // The coupled owner may only refresh expiresAt (venueId/gender frozen) — used
       // when re-checking-in at the same venue, so no new entry is spawned.
       allow update: if request.auth != null
+        && isActiveUser(request.auth.uid)
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId
         && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
         && request.resource.data.venueId == resource.data.venueId
@@ -277,6 +278,7 @@ service cloud.firestore {
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
       allow delete: if request.auth != null
+        && isActiveUser(request.auth.uid)
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId;
     }
 

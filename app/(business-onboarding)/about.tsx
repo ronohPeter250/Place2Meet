@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
 import { Header } from '../../src/components/layout/Header';
@@ -28,6 +28,7 @@ export default function BusinessAboutScreen() {
       router.push('/(business-onboarding)/hours');
     } catch (err) {
       console.error('[BusinessAboutScreen] about update failed:', err);
+      Alert.alert('שגיאה', 'אירעה שגיאה בשמירת התיאור. נסה שוב.');
     } finally {
       setLoading(false);
     }
