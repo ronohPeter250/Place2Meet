@@ -97,7 +97,23 @@ export default function ChatConversationScreen() {
     let scrollTimer: ReturnType<typeof setTimeout>;
 
     const unsubscribe = subscribeToMessages(chatId, (msgs) => {
-      setMessages(msgs);
+      // ACCUMULATE, don't replace. subscribeToMessages returns a sliding
+      // last-PAGE_SIZE window; replacing `messages` each snapshot would drop older
+      // messages that scroll out of the window as new ones arrive, and those aren't
+      // in earlierMessages either — leaving a permanent hole in the scrollback.
+      // Merge by id (updates read-receipts/resolved timestamps too) and keep asc
+      // order; a pending (null) server timestamp sorts to the end (it's newest).
+      setMessages(prev => {
+        if (prev.length === 0) return msgs;
+        const byId = new Map<string, Message>();
+        for (const m of prev) byId.set(m.id, m);
+        for (const m of msgs) byId.set(m.id, m);
+        return Array.from(byId.values()).sort((a, b) => {
+          const ta = (a.timestamp as Timestamp)?.toMillis?.() ?? Number.MAX_SAFE_INTEGER;
+          const tb = (b.timestamp as Timestamp)?.toMillis?.() ?? Number.MAX_SAFE_INTEGER;
+          return ta - tb;
+        });
+      });
       // Only follow the tail if the reader is already near the bottom — don't
       // yank them down while they're browsing older history.
       if (!atBottomRef.current) return;

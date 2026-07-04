@@ -38,6 +38,7 @@ export default function BusinessEventsScreen() {
   const [selectedEvent, setSelectedEvent] = useState<AppEvent | null>(null);
   const [businessLogo, setBusinessLogo] = useState<string | null>(null);
   const [businessAddress, setBusinessAddress] = useState('');
+  const [error, setError] = useState(false);
 
   // Responsive layout — cover ~50% of screen so details card starts lower
   const cardOverlap = 30;
@@ -61,14 +62,22 @@ export default function BusinessEventsScreen() {
       let cancelled = false;
       (async () => {
         try {
-          const [myEvents, bizDoc] = await Promise.all([
+          // allSettled so a business-doc (logo/address) read failure can't blank
+          // the owner's real events — only an events-fetch failure is an error.
+          const [evRes, bizRes] = await Promise.allSettled([
             getEventsByCreator(user.uid),
             getDoc(doc(db, 'businesses', user.uid)),
           ]);
           if (!cancelled) {
-            setEvents(myEvents);
-            if (bizDoc.exists()) {
-              const data = bizDoc.data();
+            if (evRes.status === 'fulfilled') {
+              setEvents(evRes.value);
+              setError(false);
+            } else {
+              console.error('[BusinessEventsScreen] events fetch failed:', evRes.reason);
+              setError(true);
+            }
+            if (bizRes.status === 'fulfilled' && bizRes.value.exists()) {
+              const data = bizRes.value.data();
               setBusinessLogo(data?.logo ?? data?.photos?.[0] ?? null);
               setBusinessAddress(data?.location ?? '');
             }
@@ -76,7 +85,7 @@ export default function BusinessEventsScreen() {
           }
         } catch (err) {
           console.error('[BusinessEventsScreen] fetch failed:', err);
-          if (!cancelled) setLoading(false);
+          if (!cancelled) { setError(true); setLoading(false); }
         }
       })();
       return () => { cancelled = true; };
@@ -118,7 +127,13 @@ export default function BusinessEventsScreen() {
         <Text style={styles.headerTitle}>אירועים קרובים</Text>
       </View>
 
-      {events.length === 0 && !loading ? (
+      {error && events.length === 0 && !loading ? (
+        <View style={styles.emptyContainer}>
+          <EmptyEventsIcon size={76} color="#FF7043" />
+          <Text style={styles.emptyTitle}>שגיאה בטעינת האירועים</Text>
+          <Text style={styles.emptySubtext}>בדוק את החיבור לאינטרנט ונסה שוב.</Text>
+        </View>
+      ) : events.length === 0 && !loading ? (
         <View style={styles.emptyContainer}>
           <EmptyEventsIcon size={76} color="#FF7043" />
           <Text style={styles.emptyTitle}>{he.events.noEvents}</Text>
