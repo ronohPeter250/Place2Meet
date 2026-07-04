@@ -164,7 +164,12 @@ export async function updateUserPhotoModeration(uid: string, photoKey: string, s
   const safePhotoKey = photoModerationKey(photoKey);
   const batch = writeBatch(db);
   batch.set(doc(db, 'users', uid, 'adminData', 'private'), {
-    [`photoModeration.${safePhotoKey}`]: status,
+    // A NESTED map literal, not a dotted key: set(merge) treats a dotted key as a
+    // LITERAL field name (only updateDoc splits dots into a field path), so the
+    // dotted form created a field literally named "photoModeration.<key>" and the
+    // reader (user.photoModeration?.[key]) never saw it — every photo stayed
+    // "pending". set(merge) deep-merges this map, preserving prior moderations.
+    photoModeration: { [safePhotoKey]: status },
     updatedByAdminAt: serverTimestamp(),
     updatedByAdminId: admin.adminId,
   }, { merge: true });
