@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
+  NativeSyntheticEvent, NativeScrollEvent,
 } from 'react-native';
 import { SendIcon } from '../../../src/components/ui/SvgIcons';
 import { CachedImage } from '../../../src/components/ui/CachedImage';
@@ -41,6 +42,7 @@ export default function ChatConversationScreen() {
   const [sending, setSending] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const suppressScrollRef = useRef(false);
+  const atBottomRef = useRef(true);
   const lastMarkedRef = useRef<string | null>(null);
 
   // Header + access guard: confirm the current user is a participant before
@@ -96,6 +98,9 @@ export default function ChatConversationScreen() {
 
     const unsubscribe = subscribeToMessages(chatId, (msgs) => {
       setMessages(msgs);
+      // Only follow the tail if the reader is already near the bottom — don't
+      // yank them down while they're browsing older history.
+      if (!atBottomRef.current) return;
       clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -188,6 +193,8 @@ export default function ChatConversationScreen() {
   const handleSend = useCallback(async () => {
     if (!chatId || !inputText.trim() || sending) return;
 
+    // Sending your own message should always scroll you to it.
+    atBottomRef.current = true;
     const text = inputText.trim();
     setInputText('');
     setSending(true);
@@ -235,7 +242,15 @@ export default function ChatConversationScreen() {
       suppressScrollRef.current = false;
       return;
     }
+    // Don't jump to the bottom on content growth while the reader is scrolled up.
+    if (!atBottomRef.current) return;
     flatListRef.current?.scrollToEnd({ animated: false });
+  }, []);
+
+  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+    atBottomRef.current =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height) < 120;
   }, []);
 
   // "Load earlier" control at the top of the history.
@@ -284,6 +299,8 @@ export default function ChatConversationScreen() {
           ListHeaderComponent={listHeader}
           contentContainerStyle={styles.messagesContent}
           onContentSizeChange={handleContentSizeChange}
+          onScroll={handleScroll}
+          scrollEventThrottle={100}
         />
 
         <View style={styles.inputContainer}>
