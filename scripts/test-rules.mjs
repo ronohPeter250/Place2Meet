@@ -19,7 +19,7 @@ const testEnv = await initializeTestEnvironment({
 // Seed users (active: users doc exists, no accountStatus => treated active).
 await testEnv.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
-  await setDoc(doc(db, 'users/A'), { name: 'A', profileComplete: true });
+  await setDoc(doc(db, 'users/A'), { name: 'A', gender: 'male', profileComplete: true });
   await setDoc(doc(db, 'users/B'), { name: 'B', profileComplete: true });
   await setDoc(doc(db, 'users/C'), { name: 'C', profileComplete: true });
   // D = a fully-filled profile (still incomplete flag); E = missing gender.
@@ -32,6 +32,8 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   // A registered doc for the genderField-immutability test, and a checkin at BIZ's venue.
   await setDoc(doc(db, 'registrations/A_E3'), { userId: 'A', eventId: 'E3', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
   await setDoc(doc(db, 'checkins/U_BIZ'), { userId: 'U', venueId: 'BIZ', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
+  // A victim's presence entry (for the delete-IDOR test).
+  await setDoc(doc(db, 'venue_presence_entries/VICT'), { venueId: 'vX', gender: 'female', expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
 });
 
 const A = testEnv.authenticatedContext('A').firestore();
@@ -77,16 +79,18 @@ await no('A cannot write B location', setDoc(doc(A, 'user_locations/B'), { locat
 
 console.log('\n[checkins — expiresAt validation]');
 const inMs = (ms) => Timestamp.fromDate(new Date(Date.now() + ms));
-await ok('valid checkin (now+4h)', setDoc(doc(A, 'checkins/A_v1'), { userId:'A', venueId:'v1', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000) }));
-await no('far-future expiresAt denied', setDoc(doc(A, 'checkins/A_v2'), { userId:'A', venueId:'v2', timestamp: serverTimestamp(), expiresAt: inMs(100*3600*1000) }));
-await no('past expiresAt denied', setDoc(doc(A, 'checkins/A_v3'), { userId:'A', venueId:'v3', timestamp: serverTimestamp(), expiresAt: inMs(-3600*1000) }));
+await ok('valid checkin (now+4h)', setDoc(doc(A, 'checkins/A_v1'), { userId:'A', venueId:'v1', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ci1' }));
+await no('far-future expiresAt denied', setDoc(doc(A, 'checkins/A_v2'), { userId:'A', venueId:'v2', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(100*3600*1000), entryId:'ci2' }));
+await no('past expiresAt denied', setDoc(doc(A, 'checkins/A_v3'), { userId:'A', venueId:'v3', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(-3600*1000), entryId:'ci3' }));
+await no('checkin gender != profile denied (gender spoof)', setDoc(doc(A, 'checkins/A_v4'), { userId:'A', venueId:'v4', gender:'female', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ci4' }));
+await no('checkin pointing at an existing (victim) entry denied', setDoc(doc(A, 'checkins/A_vX'), { userId:'A', venueId:'vX', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'VICT' }));
 
 console.log('\n[R1 fixes — swipe id binding / checkins list / profileComplete / reads+metadata]');
 await no('forge reverse swipe (id B_A, fromUser A) denied', setDoc(doc(A, 'swipes/B_A'), { fromUser: 'A', toUser: 'B', action: 'like', timestamp: serverTimestamp() }));
 await no('self-swipe denied', setDoc(doc(A, 'swipes/A_A'), { fromUser: 'A', toUser: 'A', action: 'like', timestamp: serverTimestamp() }));
 await ok('A lists OWN checkins', getDocs(query(collection(A, 'checkins'), where('userId', '==', 'A'))));
 await no('venue-scoped checkin list (enumerate presence) denied', getDocs(query(collection(A, 'checkins'), where('venueId', '==', 'v1'))));
-await no('checkin with mismatched doc id denied', setDoc(doc(A, 'checkins/A_WRONG'), { userId: 'A', venueId: 'v9', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000) }));
+await no('checkin with mismatched doc id denied', setDoc(doc(A, 'checkins/A_WRONG'), { userId: 'A', venueId: 'v9', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ci9' }));
 await ok('D flips profileComplete=true WITH all fields', updateDoc(doc(D, 'users/D'), { profileComplete: true }));
 await no('E flips profileComplete=true MISSING gender denied', updateDoc(doc(E, 'users/E'), { profileComplete: true }));
 await ok('A stamps OWN reads', updateDoc(doc(A, 'chats/A_B'), { ['reads.A']: serverTimestamp() }));
@@ -142,9 +146,16 @@ gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female',
 await no('presence entry gender mismatch denied', gm.commit());
 // Anyone may LIST entries to count — but they carry no userId, so no enumeration.
 await ok('list presence entries by venue (aggregate only)', getDocs(query(collection(B, 'venue_presence_entries'), where('venueId', '==', 'vP'))));
-// Only the coupled owner may delete an entry.
+// The coupled owner may refresh expiresAt (re-check-in reuses the entry).
+await ok('coupled owner refreshes entry expiresAt', updateDoc(doc(A, 'venue_presence_entries/ENT1'), { expiresAt: inMs(4 * 3600 * 1000) }));
 await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));
-await ok('owner deletes own presence entry', deleteDoc(doc(A, 'venue_presence_entries/ENT1')));
+// Can't delete a check-in while orphaning its entry (blocks churn self-inflation)...
+await no('delete checkin leaving entry orphaned denied', deleteDoc(doc(A, 'checkins/A_vP')));
+// ...but a real checkout deletes entry + checkin together.
+const chkOut = writeBatch(A);
+chkOut.delete(doc(A, 'venue_presence_entries/ENT1'));
+chkOut.delete(doc(A, 'checkins/A_vP'));
+await ok('checkout deletes entry + checkin together', chkOut.commit());
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

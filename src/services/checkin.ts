@@ -43,31 +43,58 @@ export async function checkInToVenue(venueId: string): Promise<void> {
   const userSnap = await getDoc(doc(db, 'users', uid));
   const gender = normalizeGender((userSnap.data() as { gender?: string } | undefined)?.gender);
 
-  // A user is present at one venue at a time — remove any prior check-in (and its
-  // public entry) before adding the new one.
-  const existing = await getDocs(query(collection(db, 'checkins'), where('userId', '==', uid)));
-
+  const checkinId = `${uid}_${venueId}`;
   const expiresAt = Timestamp.fromDate(
     new Date(Date.now() + CHECKIN_DURATION_HOURS * 3600 * 1000),
   );
-  const checkinId = `${uid}_${venueId}`;
-  const entryRef = doc(collection(db, 'venue_presence_entries'));
+
+  let existing = await getDocs(query(collection(db, 'checkins'), where('userId', '==', uid)));
+
+  // A legacy check-in at THIS venue (created before the presence feature, no
+  // entryId) can't be refreshed or created-in-place under the new rules, so drop
+  // it first in its own write, then re-read.
+  const legacySame = existing.docs.find(
+    d => d.id === checkinId && !(d.data() as { entryId?: string }).entryId,
+  );
+  if (legacySame) {
+    const del = writeBatch(db);
+    del.delete(legacySame.ref);
+    await del.commit();
+    existing = await getDocs(query(collection(db, 'checkins'), where('userId', '==', uid)));
+  }
+
+  const same = existing.docs.find(
+    d => d.id === checkinId && (d.data() as { entryId?: string }).entryId,
+  );
 
   const batch = writeBatch(db);
+  // Leaving any OTHER venue: remove that check-in AND its presence entry together
+  // (the rules require the entry to be co-deleted).
   existing.docs.forEach(d => {
+    if (d.id === checkinId) return;
     const oldEntryId = (d.data() as { entryId?: string }).entryId;
     if (oldEntryId) batch.delete(doc(db, 'venue_presence_entries', oldEntryId));
     batch.delete(d.ref);
   });
-  batch.set(entryRef, { venueId, gender, expiresAt });
-  batch.set(doc(db, 'checkins', checkinId), {
-    userId: uid,
-    venueId,
-    gender,
-    timestamp: serverTimestamp(),
-    expiresAt,
-    entryId: entryRef.id,
-  });
+
+  if (same) {
+    // Already present here — just extend the window, reusing the same entry so no
+    // duplicate presence is created.
+    const entryId = (same.data() as { entryId: string }).entryId;
+    batch.update(doc(db, 'venue_presence_entries', entryId), { expiresAt });
+    batch.update(doc(db, 'checkins', checkinId), { expiresAt });
+  } else {
+    const entryRef = doc(collection(db, 'venue_presence_entries'));
+    batch.set(entryRef, { venueId, gender, expiresAt });
+    batch.set(doc(db, 'checkins', checkinId), {
+      userId: uid,
+      venueId,
+      gender,
+      timestamp: serverTimestamp(),
+      expiresAt,
+      entryId: entryRef.id,
+    });
+  }
   await batch.commit();
 }
 

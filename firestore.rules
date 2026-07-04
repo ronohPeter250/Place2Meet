@@ -166,6 +166,12 @@ service cloud.firestore {
         && isActiveBusiness(request.auth.uid);
     }
 
+    // The caller's real profile gender (default 'other'). Used to stop a client
+    // from checking in under a fabricated gender and skewing the presence tally.
+    function profileGender() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('gender', 'other');
+    }
+
     match /checkins/{checkinId} {
       // A user may read a single checkin, but may only LIST their OWN — otherwise
       // any active user could enumerate everyone's real-time physical presence.
@@ -180,24 +186,39 @@ service cloud.firestore {
       // Doc id is bound to uid_venueId (one active checkin per user+venue; blocks
       // random-id spam), expiresAt must be a server-plausible near future, and
       // venueId is immutable on update.
+      // gender must match the real profile (no fabricated buckets), and entryId
+      // must reference a NOT-yet-existing presence entry — so a caller can never
+      // point their check-in at someone else's entry (which would let them delete
+      // it). Its expiresAt is a server-plausible near future.
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
         && request.resource.data.userId == request.auth.uid
         && checkinId == request.auth.uid + '_' + request.resource.data.venueId
+        && request.resource.data.gender == profileGender()
+        && !exists(/databases/$(database)/documents/venue_presence_entries/$(request.resource.data.entryId))
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
+      // On update only expiresAt may move — venueId/gender/entryId are frozen, so a
+      // check-in can't be re-pointed to spawn extra presence entries.
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.venueId == resource.data.venueId
+        && request.resource.data.gender == resource.data.gender
+        && request.resource.data.entryId == resource.data.entryId
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
+      // Deleting a check-in requires its presence entry to be deleted in the same
+      // write (or it never had one) — so a user can't delete their check-in while
+      // leaving an orphaned entry counted, i.e. no self-inflation by churn.
       allow delete: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && resource.data.userId == request.auth.uid;
+        && resource.data.userId == request.auth.uid
+        && (!('entryId' in resource.data)
+            || getAfter(/databases/$(database)/documents/venue_presence_entries/$(resource.data.entryId)) == null);
     }
 
     // Identity-free presence tally. Each doc is { venueId, gender, expiresAt } with
@@ -216,7 +237,16 @@ service cloud.firestore {
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h')
         && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + request.resource.data.venueId)).data.entryId == entryId
         && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + request.resource.data.venueId)).data.gender == request.resource.data.gender;
-      allow update: if false;
+      // The coupled owner may only refresh expiresAt (venueId/gender frozen) — used
+      // when re-checking-in at the same venue, so no new entry is spawned.
+      allow update: if request.auth != null
+        && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId
+        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
+        && request.resource.data.venueId == resource.data.venueId
+        && request.resource.data.gender == resource.data.gender
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
       allow delete: if request.auth != null
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId;
     }
