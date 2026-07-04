@@ -321,6 +321,11 @@ service cloud.firestore {
         && request.auth.uid in request.resource.data.participants
         && request.resource.data.participants.size() == 2
         && hasMutualLike(request.auth.uid, otherParticipant(request.resource.data.participants))
+        // Doc id is bound to the SORTED participants, so a pair has exactly ONE
+        // canonical chat doc — a matched peer can't flood the victim's chat list
+        // with unlimited junk chats at random ids.
+        && chatId == request.resource.data.participants[0] + '_' + request.resource.data.participants[1]
+        && request.resource.data.participants[0] < request.resource.data.participants[1]
         // Same field constraints as update, applied on CREATE — so a matched peer
         // can't seed a chat with a forged lastSenderId/reads or unbounded lastMessage.
         && request.resource.data.keys().hasOnly(['participants', 'lastMessage', 'lastMessageAt', 'lastSenderId', 'reads'])

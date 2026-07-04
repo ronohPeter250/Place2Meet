@@ -107,6 +107,10 @@ export default function SwipesScreen() {
     try {
       const isMatch = await createSwipe(currentUser.uid, direction);
       if (isMatch && user) {
+        // Reset before this match's chat is created — otherwise a failed creation
+        // here would leave the PREVIOUS match's chat id stale, routing this match's
+        // "send message" to the wrong conversation.
+        setMatchChatId(null);
         try {
           // Create chat document for the match
           const { createChatForMatch } = await import('../../src/services/chat');
@@ -187,6 +191,7 @@ export default function SwipesScreen() {
   const handleKeepSwiping = useCallback(() => {
     setShowMatch(false);
     setMatchedUser(null);
+    setMatchChatId(null);
   }, []);
 
   const handleFilterApply = useCallback((newFilters: FilterValues) => {

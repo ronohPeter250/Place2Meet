@@ -210,6 +210,7 @@ await no('register for a suspended-business event denied', setDoc(doc(A, 'regist
 
 console.log('\n[R10 fix — cancel->rejoin gate + chat-create validation]');
 await no('re-join a suspended-business event denied (cancel->rejoin bypass closed)', updateDoc(doc(A, 'registrations/A_ESU2'), { status: 'registered' }));
+await no('chat create with non-canonical id denied (anti-flood)', setDoc(doc(A, 'chats/JUNK'), { participants: ['A', 'B'], lastMessage: '', lastMessageAt: serverTimestamp() }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

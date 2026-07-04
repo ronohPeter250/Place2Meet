@@ -319,9 +319,10 @@ export default function MapScreen() {
   }, [user]);
 
   useEffect(() => {
-    // Only persist a REAL fix — without `granted`, a denied/failed-GPS session
-    // would write useLocation's default Tel Aviv coordinate as the user's location.
-    if (user && granted && latitude != null && longitude != null && !locationLoading) {
+    // Only persist a REAL fix: require permission granted AND no fetch error —
+    // otherwise a granted-but-GPS-failed session would still write useLocation's
+    // default Tel Aviv coordinate as the user's location.
+    if (user && granted && !locationError && latitude != null && longitude != null && !locationLoading) {
       // Skip redundant writes (e.g. when `user` gets a new reference on a token
       // refresh but the coordinates are unchanged).
       const key = `${user.uid}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`;
@@ -335,7 +336,7 @@ export default function MapScreen() {
           debugLog('MAP', 'location update failed', { error: String(err) });
         });
     }
-  }, [user, granted, latitude, longitude, locationLoading]);
+  }, [user, granted, locationError, latitude, longitude, locationLoading]);
 
   // Whenever a new marker png arrives, nudge the map so it re-rasterises and
   // the freshly-added marker actually paints on first entry.
