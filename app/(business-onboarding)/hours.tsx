@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
   Switch,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../src/components/layout/ScreenWrapper';
@@ -82,6 +83,7 @@ export default function BusinessHoursScreen() {
       router.push('/(business-onboarding)/photos');
     } catch (err) {
       console.error('[BusinessHoursScreen] hours update failed:', err);
+      Alert.alert('שגיאה', 'אירעה שגיאה בשמירת שעות הפעילות. נסה שוב.');
     } finally {
       setLoading(false);
     }

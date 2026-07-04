@@ -34,7 +34,10 @@ export default function ContactNameScreen() {
       router.push('/(business-onboarding)/business-name');
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
-      if (code === 'already-exists' || code === 'permission-denied') {
+      // Only a harmless double-create (already-exists) should advance; a real
+      // permission-denied means the profile was NOT saved, so keep the user here
+      // to retry rather than advancing into steps that will all fail.
+      if (code === 'already-exists') {
         router.push('/(business-onboarding)/business-name');
       } else {
         Alert.alert('שגיאה', 'אירעה שגיאה בשמירת הפרופיל. נסה שוב.');
