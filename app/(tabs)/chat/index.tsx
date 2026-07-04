@@ -43,15 +43,21 @@ export default function ChatListScreen() {
           .filter(uid => uid && !nameCache.current.has(uid));
 
         if (uncachedUids.length > 0) {
-          const profiles = await Promise.all(
+          // allSettled: one unreadable participant (e.g. suspended/blocked, whose
+          // users doc read is denied) must degrade to an "Unknown" row, not reject
+          // the whole batch and blank the entire chat list.
+          const results = await Promise.allSettled(
             uncachedUids.map(uid => getUserProfile(uid).then(p => ({
               uid,
               name: p?.name ?? 'Unknown',
-              photo: p?.photos?.[0],
+              photo: p?.photos?.[0] as string | undefined,
             })))
           );
           if (cancelled) return;
-          profiles.forEach(({ uid, name, photo }) => nameCache.current.set(uid, { name, photo }));
+          results.forEach((r, i) => {
+            const entry = r.status === 'fulfilled' ? r.value : { uid: uncachedUids[i], name: 'Unknown', photo: undefined };
+            nameCache.current.set(entry.uid, { name: entry.name, photo: entry.photo });
+          });
         }
 
         const enriched = rawChats.map(chat => {

@@ -348,9 +348,16 @@ export default function MapScreen() {
 
   const handleMarkerPress = useCallback((venue: Venue) => { setSelectedVenue(venue); setShowVenuePopup(true); }, []);
   const handleClosePopup = useCallback(() => { setShowVenuePopup(false); setSelectedVenue(null); }, []);
+  const checkInFlightRef = useRef(false);
   const handleCheckIn = useCallback(async (venueId: string) => {
+    // Guard against a double-tap: two overlapping check-ins would each mint a
+    // separate presence entry (the checkin doc collapses, the entries don't),
+    // over-counting the venue until they expire.
+    if (checkInFlightRef.current) return;
+    checkInFlightRef.current = true;
     try { await checkInToVenue(venueId); Alert.alert('נרשמת בהצלחה!', 'אתה רשום כנוכח במקום.'); setShowVenuePopup(false); }
     catch { Alert.alert('שגיאה', 'לא ניתן להירשם כרגע. נסה שוב.'); }
+    finally { checkInFlightRef.current = false; }
   }, []);
   const handleFilterApply = useCallback((f: FilterValues) => { setFilters(f); setShowFilter(false); }, []);
   const handleFilterClose = useCallback(() => setShowFilter(false), []);

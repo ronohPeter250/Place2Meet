@@ -135,13 +135,13 @@ export async function getSwipeableUsers(
   if (myEventIds.length === 0) return [];
 
   // 2. Read each event's attendeeIds and union them (excluding self/already-swiped)
-  const eventDocs = await Promise.all(
+  const eventResults = await Promise.allSettled(
     myEventIds.map(eid => getDoc(doc(db, 'events', eid)))
   );
   const candidateUids = new Set<string>();
-  for (const evDoc of eventDocs) {
-    if (!evDoc.exists()) continue;
-    const attendeeIds = (evDoc.data().attendeeIds ?? []) as string[];
+  for (const res of eventResults) {
+    if (res.status !== 'fulfilled' || !res.value.exists()) continue;
+    const attendeeIds = (res.value.data().attendeeIds ?? []) as string[];
     for (const uid of attendeeIds) {
       if (uid !== currentUid && !excludeIds.has(uid)) {
         candidateUids.add(uid);
