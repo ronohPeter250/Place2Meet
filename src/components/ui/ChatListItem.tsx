@@ -95,5 +95,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: colors.primary,
   },
-  lastMessage: { fontFamily: 'PlusJakartaSans_400Regular', fontSize: 12, color: '#BDBDBD', textAlign: 'right' },
+  // Rubik (not Plus Jakarta) — the last-message preview is Hebrew user content and
+  // Plus Jakarta Sans has zero Hebrew glyphs, so it rendered as tofu/boxes.
+  lastMessage: { fontFamily: 'Rubik_400Regular', fontSize: 12, color: '#BDBDBD', textAlign: 'right' },
 });

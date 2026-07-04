@@ -369,7 +369,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   dividerText: {
-    fontFamily: 'PlusJakartaSans_400Regular',
+    // Rubik — the divider label is Hebrew ('היום' / he-IL date); Plus Jakarta Sans
+    // has no Hebrew glyphs and would render tofu/boxes.
+    fontFamily: 'Rubik_400Regular',
     fontSize: 14,
     color: colors.textSecondary,
     textAlign: 'center',

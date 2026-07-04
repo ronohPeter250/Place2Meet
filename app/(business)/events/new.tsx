@@ -64,6 +64,15 @@ export default function NewEventScreen() {
             if (ev.dateTime?.toDate) setEventDate(ev.dateTime.toDate());
             if (ev.venuePhoto) setVenuePhoto(ev.venuePhoto);
           }
+        } else if (!cancelled) {
+          // Create mode — clear stale form state from a prior visit. This screen
+          // is a tab and stays mounted, so useState survives create->create
+          // navigation and would otherwise pre-fill the last event's title/etc.
+          setTitle('');
+          setOriginalTitle('');
+          setDescription('');
+          setCapacity('30');
+          setEventDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
         }
       } catch (err) {
         console.error('[NewEventScreen] fetch failed:', err);
