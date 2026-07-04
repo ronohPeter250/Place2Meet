@@ -184,7 +184,13 @@ export async function createChatForMatch(
     throw new Error('Cannot create chat without a mutual match');
   }
 
-  const chatId = [user1, user2].sort().join('_');
+  // Sort ONCE and use the same order for both the doc id and the participants
+  // array — the rule binds chatId to the SORTED participants (participants[0] <
+  // participants[1]), so writing an unsorted array would be denied for ~half of
+  // uid orderings. (Reads use array-contains / `uid in participants`, both
+  // order-independent, so sorting has no read-side effect.)
+  const pair = [user1, user2].sort();
+  const chatId = pair.join('_');
   const chatRef = doc(db, 'chats', chatId);
 
   // Atomic create-if-absent. A transaction ensures two clients racing on the same
@@ -195,7 +201,7 @@ export async function createChatForMatch(
     const snap = await tx.get(chatRef);
     if (!snap.exists()) {
       tx.set(chatRef, {
-        participants: [user1, user2],
+        participants: pair,
         lastMessage: '',
         lastMessageAt: serverTimestamp(),
       });

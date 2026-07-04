@@ -206,6 +206,11 @@ export default function SwipesScreen() {
   if (loading || !hasUsers) {
     return (
       <View style={styles.emptyContainer}>
+        {/* Keep the filter reachable here — an over-narrow filter can empty the
+            deck, and without this the user would be trapped with no way to widen it. */}
+        <TouchableOpacity style={styles.filterButton} onPress={() => setShowFilter(true)} activeOpacity={0.7}>
+          <FilterIcon size={28} />
+        </TouchableOpacity>
         <View style={styles.searchIconContainer}>
           <RadarAnimation size={200} />
           <View style={styles.searchIconOverlay}>
@@ -227,6 +232,12 @@ export default function SwipesScreen() {
           currentUserPhoto={myPhoto}
           onSendMessage={handleSendMessage}
           onKeepSwiping={handleKeepSwiping}
+        />
+        <FilterModal
+          visible={showFilter}
+          onClose={() => setShowFilter(false)}
+          onApply={handleFilterApply}
+          initialValues={filters}
         />
       </View>
     );

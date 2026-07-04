@@ -119,7 +119,9 @@ export async function getDashboardStats(venueId: string, period: DashboardPeriod
   const totalGender = maleCount + femaleCount + otherCount;
   const maleP = totalGender > 0 ? Math.round((maleCount / totalGender) * 100) : 0;
   const femaleP = totalGender > 0 ? Math.round((femaleCount / totalGender) * 100) : 0;
-  const otherP = totalGender > 0 ? 100 - maleP - femaleP : 0;
+  // Clamp: independent rounding of maleP/femaleP can push their sum to 101,
+  // which would otherwise make otherP a negative -1.
+  const otherP = totalGender > 0 ? Math.max(0, 100 - maleP - femaleP) : 0;
 
   return {
     dailyAverage,
