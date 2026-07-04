@@ -124,7 +124,13 @@ export async function getSwipeableUsers(
     where('userId', '==', currentUid),
     where('status', '==', 'registered'),
   );
-  const myRegsSnap = await getDocs(myRegsQ);
+  // Fetch the user's own dating preference (orientation) alongside their regs, so
+  // the deck only shows genders they actually want to date (was ignored entirely).
+  const [meDoc, myRegsSnap] = await Promise.all([
+    getDoc(doc(db, 'users', currentUid)),
+    getDocs(myRegsQ),
+  ]);
+  const myPrefs = (meDoc.data()?.datingPreference ?? []) as string[];
   const myEventIds = myRegsSnap.docs.map(d => d.data().eventId as string);
   if (myEventIds.length === 0) return [];
 
@@ -156,6 +162,8 @@ export async function getSwipeableUsers(
     .filter(docSnap => docSnap.exists())
     .map(docSnap => docSnap.data() as UserProfile)
     .filter(u => u.profileComplete && isActiveAccount(u.accountStatus))
+    // Orientation: only show genders the user wants to date (empty = no preference).
+    .filter(u => myPrefs.length === 0 || (!!u.gender && myPrefs.includes(u.gender)))
     .filter(u => matchesFilters(u, filters))
     .slice(0, maxResults);
 }

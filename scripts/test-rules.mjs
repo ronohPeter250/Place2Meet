@@ -33,6 +33,10 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   // A suspended business + its event (registration must be denied server-side).
   await setDoc(doc(db, 'businesses/SUSP'), { name: 'Susp', accountStatus: 'suspended' });
   await setDoc(doc(db, 'events/ESU'), { createdBy: 'SUSP', venueId: 'SUSP', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 }, dateTime: Timestamp.fromDate(new Date(Date.now() + 86400000)) });
+  // E3 backs the genderField-immutability + re-join tests (now that re-join checks the event's business).
+  await setDoc(doc(db, 'events/E3'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 }, dateTime: Timestamp.fromDate(new Date(Date.now() + 86400000)) });
+  // A cancelled registration on the SUSPENDED business's event (for the re-join gate test).
+  await setDoc(doc(db, 'registrations/A_ESU2'), { userId: 'A', eventId: 'ESU', status: 'cancelled', genderField: 'male', timestamp: serverTimestamp() });
   // A registered doc for the genderField-immutability test, and a checkin at BIZ's venue.
   await setDoc(doc(db, 'registrations/A_E3'), { userId: 'A', eventId: 'E3', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
   await setDoc(doc(db, 'checkins/U_BIZ'), { userId: 'U', venueId: 'BIZ', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
@@ -203,6 +207,9 @@ await no('message with extra field denied', setDoc(doc(A, 'chats/A_B/messages/mx
 
 console.log('\n[R9 fix — suspended-business event registration blocked]');
 await no('register for a suspended-business event denied', setDoc(doc(A, 'registrations/A_ESU'), { userId: 'A', eventId: 'ESU', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
+
+console.log('\n[R10 fix — cancel->rejoin gate + chat-create validation]');
+await no('re-join a suspended-business event denied (cancel->rejoin bypass closed)', updateDoc(doc(A, 'registrations/A_ESU2'), { status: 'registered' }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
