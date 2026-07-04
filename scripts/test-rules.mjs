@@ -183,6 +183,11 @@ await ok('owner writes contact PII to private subdoc', setDoc(doc(BIZ, 'business
 await ok('owner reads own contact PII', getDoc(doc(BIZ, 'businesses/BIZ/private/contact')));
 await no('other user cannot read business contact PII', getDoc(doc(C, 'businesses/BIZ/private/contact')));
 
+console.log('\n[R6 fixes — checkin get scope / chat lastMessage cap]');
+await ok('owner GETs own checkin', getDoc(doc(A, 'checkins/A_v1')));
+await no('non-owner cannot GET a specific checkin (anti-stalking)', getDoc(doc(C, 'checkins/A_v1')));
+await no('oversized lastMessage denied', updateDoc(doc(A, 'chats/A_B'), { lastMessage: 'x'.repeat(2001), lastMessageAt: serverTimestamp() }));
+
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
 try {

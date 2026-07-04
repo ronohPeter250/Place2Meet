@@ -214,6 +214,15 @@ export default function SwipesScreen() {
           style={styles.bottomFade}
           pointerEvents="none"
         />
+        {/* Still render the match modal here — matching on the LAST card flips
+            hasUsers to false, and the modal must not be pre-empted by this state. */}
+        <MatchModal
+          visible={showMatch}
+          matchedUser={matchedUser}
+          currentUserPhoto={myPhoto}
+          onSendMessage={handleSendMessage}
+          onKeepSwiping={handleKeepSwiping}
+        />
       </View>
     );
   }

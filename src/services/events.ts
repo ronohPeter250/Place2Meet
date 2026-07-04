@@ -115,11 +115,12 @@ function tallyVenueCounts(
   const counts = new Map<string, number>();
   const venueIds = new Set<string>([...sets.keys(), ...fallback.keys()]);
   for (const vid of venueIds) {
-    // Prefer the distinct-user set when the venue has any attendeeIds event.
-    // Only fall back to summed attendeeCount for venues whose events ALL lack
-    // attendeeIds — mixing the two would double-count a shared user.
+    // Prefer the distinct-user set when the venue has attendeeIds registrations.
+    // A set that EXISTS but is empty (a modern event with nobody registered yet)
+    // must NOT suppress a legacy event's attendeeCount at the same venue, so only
+    // use the set when it actually has members.
     const s = sets.get(vid);
-    counts.set(vid, s ? s.size : (fallback.get(vid) ?? 0));
+    counts.set(vid, s && s.size > 0 ? s.size : (fallback.get(vid) ?? 0));
   }
   return counts;
 }

@@ -199,7 +199,12 @@ service cloud.firestore {
       // A venue owner (checkins.venueId == their uid) and admins may list their
       // own venue's activity (business dashboard / admin analytics) — a regular
       // user's uid is never a venueId, so they still can't enumerate anyone.
-      allow get: if isActiveActor();
+      // get is scoped the same as list — otherwise a stalker could probe
+      // checkins/{targetUid}_{venueId} per venue to locate a specific person.
+      allow get: if isActiveActor()
+        && (resource.data.userId == request.auth.uid
+            || resource.data.venueId == request.auth.uid
+            || isAdmin());
       allow list: if isActiveActor()
         && (resource.data.userId == request.auth.uid
             || resource.data.venueId == request.auth.uid
@@ -333,7 +338,9 @@ service cloud.firestore {
         && (!('lastSenderId' in request.resource.data.diff(resource.data).affectedKeys())
             || request.resource.data.lastSenderId == request.auth.uid)
         && (!('lastMessageAt' in request.resource.data.diff(resource.data).affectedKeys())
-            || request.resource.data.lastMessageAt == request.time);
+            || request.resource.data.lastMessageAt == request.time)
+        && (!('lastMessage' in request.resource.data.diff(resource.data).affectedKeys())
+            || (request.resource.data.lastMessage is string && request.resource.data.lastMessage.size() <= 2000));
 
       match /messages/{messageId} {
         allow read: if isActiveActor()

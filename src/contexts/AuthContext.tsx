@@ -156,7 +156,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           () => {
             if (callId !== latestCallId) return;
             setUser(nextUser);
-            setProfiles(EMPTY_PROFILES);
+            // A transient listener error must NOT wipe an already-loaded profile
+            // (that would bounce a signed-in user back to onboarding or clear a
+            // blocked/status flag). Only fall back to EMPTY_PROFILES if nothing
+            // has loaded yet.
+            setProfiles(prev => prev ?? EMPTY_PROFILES);
             setAuthResolved(true);
           },
         );

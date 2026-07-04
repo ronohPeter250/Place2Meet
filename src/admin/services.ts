@@ -226,15 +226,19 @@ export async function saveBusinessForAdmin(input: AdminBusinessInput): Promise<s
     contactName: input.contactName.trim(),
     email: input.email.trim(),
   }, { merge: true });
-  batch.set(doc(collection(db, 'adminAuditLogs')), {
+  // Build the audit entry without a top-level `undefined` — Firestore rejects
+  // undefined field values (ignoreUndefinedProperties is off), which crashed the
+  // admin "create business" path where before does not exist.
+  const auditEntry: Record<string, unknown> = {
     ...admin,
     targetType: 'business',
     targetId: id,
     action: before.exists() ? 'business_update' : 'business_create',
-    before: before.exists() ? before.data() : undefined,
     after: data,
     createdAt: serverTimestamp(),
-  });
+  };
+  if (before.exists()) auditEntry.before = before.data();
+  batch.set(doc(collection(db, 'adminAuditLogs')), auditEntry);
   await batch.commit();
   return id;
 }
