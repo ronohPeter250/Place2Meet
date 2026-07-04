@@ -225,8 +225,15 @@ export async function updateEvent(
   const eventRef = doc(db, 'events', eventId);
   const snap = await getDoc(eventRef);
   if (!snap.exists()) throw new Error('Event not found');
-  if (snap.data()?.createdBy !== uid) {
+  const current = snap.data();
+  if (current?.createdBy !== uid) {
     throw new Error('Unauthorized: only event creator can update');
+  }
+  // Capacity can't drop below the people already registered — otherwise the card
+  // would show an over-capacity "X/Y" with X > Y.
+  const newCap = (data as { capacity?: number }).capacity;
+  if (typeof newCap === 'number' && newCap < (current?.attendeeCount ?? 0)) {
+    throw new Error('Capacity below current attendees');
   }
 
   await updateDoc(eventRef, data);

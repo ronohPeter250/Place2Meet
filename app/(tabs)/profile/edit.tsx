@@ -70,6 +70,13 @@ export default function EditProfileScreen() {
   const handleSave = useCallback(async () => {
     if (!user || saving) return;
 
+    // A profile must keep at least 2 photos — guard here (and give a clear
+    // message) rather than letting the write fail with a permission error.
+    if (photos.length < 2) {
+      Alert.alert('', 'נדרשות לפחות 2 תמונות בפרופיל');
+      return;
+    }
+
     // The main photo (index 0) must contain a face. Re-check whenever it changed
     // identity from the loaded profile — covers a newly-picked local photo AND a
     // remote photo that shifted into slot 0 after the original main was removed.

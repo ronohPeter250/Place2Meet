@@ -60,6 +60,19 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/registrations/$(request.auth.uid + '_' + eventId)).data;
     }
 
+    // The required fields for a profile to be marked complete. Enforced only at
+    // the moment profileComplete becomes true (create or false->true update) — NOT
+    // on every later edit, so a normal profile edit is never re-validated.
+    function profileFieldsValid() {
+      return request.resource.data.name is string && request.resource.data.name.size() > 0
+        && request.resource.data.gender in ['male', 'female', 'other']
+        && request.resource.data.birthday is string && request.resource.data.birthday.size() > 0
+        && request.resource.data.city is string && request.resource.data.city.size() > 0
+        && request.resource.data.photos is list && request.resource.data.photos.size() >= 2
+        && request.resource.data.datingPreference is list
+        && request.resource.data.relationshipType is list;
+    }
+
     function otherAttendeeCountsUnchanged(gender) {
       return (gender == 'male' || request.resource.data.get('attendeeCounts', {}).get('male', 0) == resource.data.get('attendeeCounts', {}).get('male', 0))
         && (gender == 'female' || request.resource.data.get('attendeeCounts', {}).get('female', 0) == resource.data.get('attendeeCounts', {}).get('female', 0))
@@ -99,25 +112,24 @@ service cloud.firestore {
         || (isActiveActor() && isActiveUser(userId));
       allow create: if request.auth != null
         && request.auth.uid == userId
-        && !request.resource.data.keys().hasAny(userAdminFields());
+        && !request.resource.data.keys().hasAny(userAdminFields())
+        && (request.resource.data.get('profileComplete', false) != true || profileFieldsValid());
       // A profile may only be marked profileComplete==true when the required
       // fields are actually present — so a UI-bypassing client can't flip the flag
       // and skip onboarding (name/gender/city/birthday/≥2 photos/prefs). Age>=18
       // is validated client-side (rules can't parse a date string).
+      // Validate the required fields ONLY when profileComplete flips from
+      // not-true to true (the completion moment) — a later edit of an
+      // already-complete profile is not re-validated, so removing/replacing a
+      // field or dropping a photo is not blocked at the rule layer.
       allow update: if isAdmin()
         || (request.auth != null
           && request.auth.uid == userId
           && isActiveUser(userId)
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(userAdminFields())
-          && (request.resource.data.get('profileComplete', false) != true || (
-               request.resource.data.name is string && request.resource.data.name.size() > 0
-               && request.resource.data.gender in ['male', 'female', 'other']
-               && request.resource.data.birthday is string && request.resource.data.birthday.size() > 0
-               && request.resource.data.city is string && request.resource.data.city.size() > 0
-               && request.resource.data.photos is list && request.resource.data.photos.size() >= 2
-               && request.resource.data.datingPreference is list
-               && request.resource.data.relationshipType is list
-             )));
+          && (!(resource.data.get('profileComplete', false) != true
+                && request.resource.data.get('profileComplete', false) == true)
+              || profileFieldsValid()));
       allow delete: if false;
 
       match /adminData/private {
@@ -157,8 +169,14 @@ service cloud.firestore {
     match /checkins/{checkinId} {
       // A user may read a single checkin, but may only LIST their OWN — otherwise
       // any active user could enumerate everyone's real-time physical presence.
+      // A venue owner (checkins.venueId == their uid) and admins may list their
+      // own venue's activity (business dashboard / admin analytics) — a regular
+      // user's uid is never a venueId, so they still can't enumerate anyone.
       allow get: if isActiveActor();
-      allow list: if isActiveActor() && resource.data.userId == request.auth.uid;
+      allow list: if isActiveActor()
+        && (resource.data.userId == request.auth.uid
+            || resource.data.venueId == request.auth.uid
+            || isAdmin());
       // Doc id is bound to uid_venueId (one active checkin per user+venue; blocks
       // random-id spam), expiresAt must be a server-plausible near future, and
       // venueId is immutable on update.
@@ -297,10 +315,18 @@ service cloud.firestore {
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
         && request.resource.data.userId == request.auth.uid;
+      // eventId is immutable and genderField can only change on a re-join
+      // (cancelled -> registered). Otherwise a user could mutate genderField while
+      // registered and then leave, decrementing a DIFFERENT bucket than they
+      // incremented — desyncing the gender counts into negatives.
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && resource.data.userId == request.auth.uid
-        && request.resource.data.userId == request.auth.uid;
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.eventId == resource.data.eventId
+        && (request.resource.data.get('genderField', '') == resource.data.get('genderField', '')
+            || (resource.data.get('status', '') == 'cancelled'
+                && request.resource.data.get('status', '') == 'registered'));
       allow delete: if false;
     }
 

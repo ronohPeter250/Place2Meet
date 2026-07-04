@@ -29,6 +29,9 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'businesses/BIZ'), { name: 'Biz' });
   await setDoc(doc(db, 'events/E1'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 } });
   await setDoc(doc(db, 'events/E2'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 1, attendeeCount: 1, attendeeIds: ['X'], attendeeCounts: { male: 1, female: 0, other: 0 } });
+  // A registered doc for the genderField-immutability test, and a checkin at BIZ's venue.
+  await setDoc(doc(db, 'registrations/A_E3'), { userId: 'A', eventId: 'E3', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
+  await setDoc(doc(db, 'checkins/U_BIZ'), { userId: 'U', venueId: 'BIZ', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
 });
 
 const A = testEnv.authenticatedContext('A').firestore();
@@ -36,6 +39,8 @@ const B = testEnv.authenticatedContext('B').firestore();
 const C = testEnv.authenticatedContext('C').firestore();
 const D = testEnv.authenticatedContext('D').firestore();
 const E = testEnv.authenticatedContext('E').firestore();
+const F = testEnv.authenticatedContext('F').firestore();
+const BIZ = testEnv.authenticatedContext('BIZ').firestore();
 
 console.log('\n[swipes]');
 await ok('A creates own like swipe A->B', setDoc(doc(A, 'swipes/A_B'), { fromUser:'A', toUser:'B', action:'like', timestamp: serverTimestamp() }));
@@ -108,6 +113,19 @@ const capBatch = writeBatch(A);
 capBatch.set(doc(A, 'registrations/A_E2'), { userId: 'A', eventId: 'E2', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
 capBatch.update(doc(A, 'events/E2'), { attendeeCount: 2, attendeeIds: ['X', 'A'], 'attendeeCounts.male': 2 });
 await no('join past capacity denied', capBatch.commit());
+
+console.log('\n[R2 fixes — profileComplete transition / checkin owner-list / genderField immutability]');
+// Editing an already-complete profile is NOT re-validated (D is complete from above).
+await ok('edit complete profile: drop to 1 photo allowed (no re-validation)', updateDoc(doc(D, 'users/D'), { photos: ['p1'] }));
+// But you still cannot CREATE a doc that is born complete without the fields.
+await no('create profile born complete without fields denied', setDoc(doc(F, 'users/F'), { profileComplete: true }));
+await ok('create incomplete profile allowed', setDoc(doc(F, 'users/F'), { name: 'F', profileComplete: false }));
+// Checkin list: venue owner + admin may list their venue; a regular user may not.
+await ok('venue owner lists own venue checkins', getDocs(query(collection(BIZ, 'checkins'), where('venueId', '==', 'BIZ'))));
+await no('regular user lists another venue checkins denied', getDocs(query(collection(C, 'checkins'), where('venueId', '==', 'BIZ'))));
+// Registration genderField immutable while registered; cancel keeps it.
+await no('mutate genderField while registered denied', updateDoc(doc(A, 'registrations/A_E3'), { genderField: 'female' }));
+await ok('cancel keeps genderField allowed', updateDoc(doc(A, 'registrations/A_E3'), { status: 'cancelled' }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
