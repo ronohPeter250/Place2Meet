@@ -7,8 +7,6 @@ import { Button } from '../../src/components/ui/Button';
 import { TextField } from '../../src/components/ui/TextField';
 import { ProgressBar } from '../../src/components/ui/ProgressBar';
 import { createBusinessProfile } from '../../src/services/business';
-import { doc, deleteDoc } from 'firebase/firestore';
-import { db } from '../../src/config/firebase';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { signOut } from '../../src/services/auth';
 import { colors, typography, spacing } from '../../src/theme';
@@ -52,9 +50,10 @@ export default function ContactNameScreen() {
       <ProgressBar current={1} total={BUSINESS_TOTAL_STEPS} />
 
       <Header onBack={async () => {
-        if (user) {
-          try { await deleteDoc(doc(db, 'businesses', user.uid)); } catch {}
-        }
+        // No client-side draft cleanup: businesses deletes are forbidden by the
+        // rules, so an abandoned draft (profileComplete=false) simply persists —
+        // it's hidden from the map/events and merged on the next onboarding. (A
+        // swallowed deleteDoc here only misled readers into thinking it was cleaned.)
         await signOut();
         router.replace('/(auth)/welcome');
       }} />

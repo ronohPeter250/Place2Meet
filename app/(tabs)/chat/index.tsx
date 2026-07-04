@@ -24,6 +24,10 @@ export default function ChatListScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const nameCache = useRef<Map<string, { name: string; photo?: string }>>(new Map());
+  // Monotonic token: the enrichment callback is async (awaits name fetches), so a
+  // later snapshot can resolve before an earlier one — discard any result that
+  // isn't from the most recent snapshot, or a stale list would clobber a fresh one.
+  const seqRef = useRef(0);
 
   useEffect(() => {
     if (!user) return;
@@ -35,6 +39,7 @@ export default function ChatListScreen() {
 
     const unsubscribe = subscribeToChats(async (rawChats) => {
       if (cancelled) return;
+      const seq = ++seqRef.current;
 
       try {
         // Only fetch names not already cached
@@ -75,12 +80,15 @@ export default function ChatListScreen() {
           };
         });
 
+        // Only apply if this is still the newest snapshot (a slower earlier
+        // callback must not overwrite a fresher list with stale data).
+        if (cancelled || seq !== seqRef.current) return;
         setChats(enriched);
         setError(false);
       } catch (err) {
         console.error('[ChatListScreen] enrichment failed:', err);
       } finally {
-        setLoading(false);
+        if (seq === seqRef.current) setLoading(false);
       }
     }, (err) => {
       console.error('[ChatListScreen] subscription error:', err);
