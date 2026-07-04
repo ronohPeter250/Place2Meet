@@ -406,7 +406,10 @@ service cloud.firestore {
         && isActiveUser(request.auth.uid)
         && request.resource.data.userId == request.auth.uid
         && regId == request.auth.uid + '_' + request.resource.data.eventId
-        && request.resource.data.genderField == profileGender();
+        && request.resource.data.genderField == profileGender()
+        // Can't register for an event whose owning business is suspended/blocked —
+        // a moderated-off business must not keep collecting registrations.
+        && isActiveBusiness(get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.venueId);
       // eventId is immutable, and genderField must ALWAYS equal the real (frozen)
       // profile gender — including on a cancelled->registered re-join, so it can't
       // be re-pinned to a fake gender to spoof the event's per-gender tally. Since

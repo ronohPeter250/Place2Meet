@@ -18,6 +18,7 @@ import {
   FieldValue,
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
+import { isActiveAccount } from '../admin/utils';
 
 export interface AppEvent {
   id: string;
@@ -57,7 +58,22 @@ export async function getEvents(maxResults = 50): Promise<AppEvent[]> {
     firestoreLimit(maxResults)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as AppEvent[];
+  const events = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as AppEvent[];
+
+  // Drop events owned by a suspended/blocked business (venueId == business id),
+  // mirroring how getBusinessesAsVenues hides the business from the map — otherwise
+  // a moderated-off business keeps driving registrations and the swipe deck.
+  const venueIds = [...new Set(events.map(e => e.venueId))];
+  const bizDocs = await Promise.all(
+    venueIds.map(id => getDoc(doc(db, 'businesses', id)).catch(() => null))
+  );
+  const activeVenues = new Set<string>();
+  for (const d of bizDocs) {
+    if (d && d.exists() && isActiveAccount((d.data() as { accountStatus?: never }).accountStatus)) {
+      activeVenues.add(d.id);
+    }
+  }
+  return events.filter(e => activeVenues.has(e.venueId));
 }
 
 export async function getEventsByCreator(creatorUid: string): Promise<AppEvent[]> {

@@ -29,6 +29,10 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'businesses/BIZ'), { name: 'Biz' });
   await setDoc(doc(db, 'events/E1'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 } });
   await setDoc(doc(db, 'events/E2'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 1, attendeeCount: 1, attendeeIds: ['X'], attendeeCounts: { male: 1, female: 0, other: 0 } });
+  await setDoc(doc(db, 'events/E9'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 }, dateTime: Timestamp.fromDate(new Date(Date.now() + 86400000)) });
+  // A suspended business + its event (registration must be denied server-side).
+  await setDoc(doc(db, 'businesses/SUSP'), { name: 'Susp', accountStatus: 'suspended' });
+  await setDoc(doc(db, 'events/ESU'), { createdBy: 'SUSP', venueId: 'SUSP', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 }, dateTime: Timestamp.fromDate(new Date(Date.now() + 86400000)) });
   // A registered doc for the genderField-immutability test, and a checkin at BIZ's venue.
   await setDoc(doc(db, 'registrations/A_E3'), { userId: 'A', eventId: 'E3', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
   await setDoc(doc(db, 'checkins/U_BIZ'), { userId: 'U', venueId: 'BIZ', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
@@ -196,6 +200,9 @@ console.log('\n[R8 fix — event date not into past / message key whitelist]');
 await no('business moves event date to the past denied', updateDoc(doc(BIZ, 'events/E1'), { dateTime: inMs(-86400000) }));
 await ok('business moves event date to the future allowed', updateDoc(doc(BIZ, 'events/E1'), { dateTime: inMs(86400000) }));
 await no('message with extra field denied', setDoc(doc(A, 'chats/A_B/messages/mx'), { senderId: 'A', text: 'hi', read: false, timestamp: serverTimestamp(), extra: 'x' }));
+
+console.log('\n[R9 fix — suspended-business event registration blocked]');
+await no('register for a suspended-business event denied', setDoc(doc(A, 'registrations/A_ESU'), { userId: 'A', eventId: 'ESU', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
