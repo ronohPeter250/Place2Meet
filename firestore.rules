@@ -202,7 +202,8 @@ service cloud.firestore {
       // get is scoped the same as list — otherwise a stalker could probe
       // checkins/{targetUid}_{venueId} per venue to locate a specific person.
       allow get: if isActiveActor()
-        && (resource.data.userId == request.auth.uid
+        && (resource == null
+            || resource.data.userId == request.auth.uid
             || resource.data.venueId == request.auth.uid
             || isAdmin());
       allow list: if isActiveActor()
@@ -311,8 +312,11 @@ service cloud.firestore {
     }
 
     match /chats/{chatId} {
+      // resource == null guard: a transaction pre-read (tx.get) of a not-yet-
+      // existing chat — as createChatForMatch does — must return not-found, not
+      // error on resource.data and deny the whole transaction.
       allow read: if isActiveActor()
-        && request.auth.uid in resource.data.participants;
+        && (resource == null || request.auth.uid in resource.data.participants);
       // Chat creation requires a real, server-verified mutual match (both swipe
       // docs are 'like'). This closes the unsolicited-chat / spam vector where a
       // client could otherwise create a chat with anyone by listing itself.
@@ -415,8 +419,11 @@ service cloud.firestore {
     match /registrations/{regId} {
       // Scope get to the owner/admin — otherwise any active user could read any
       // registration (userId, eventId, gender, status) by its guessable doc id.
+      // resource == null guard: registerForEvent's transaction pre-reads the
+      // (not-yet-existing) registration doc, which must return not-found rather
+      // than error and deny the whole registration.
       allow get: if isActiveActor()
-        && (isAdmin() || resource.data.userId == request.auth.uid);
+        && (resource == null || isAdmin() || resource.data.userId == request.auth.uid);
       allow list: if isActiveActor()
         && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null

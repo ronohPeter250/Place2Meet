@@ -212,6 +212,13 @@ console.log('\n[R10 fix — cancel->rejoin gate + chat-create validation]');
 await no('re-join a suspended-business event denied (cancel->rejoin bypass closed)', updateDoc(doc(A, 'registrations/A_ESU2'), { status: 'registered' }));
 await no('chat create with non-canonical id denied (anti-flood)', setDoc(doc(A, 'chats/JUNK'), { participants: ['A', 'B'], lastMessage: '', lastMessageAt: serverTimestamp() }));
 
+console.log('\n[R16 fix — read rules tolerate a NON-EXISTENT doc (transaction pre-reads)]');
+// createChatForMatch / registerForEvent tx.get() a not-yet-existing doc; the read
+// rule must return not-found, not error on resource.data and deny the whole tx.
+await ok('get non-existent chat returns not-found (null-resource guard)', getDoc(doc(A, 'chats/ZZZ_NONE')));
+await ok('get non-existent registration returns not-found', getDoc(doc(A, 'registrations/A_NONE')));
+await ok('get non-existent checkin returns not-found', getDoc(doc(A, 'checkins/A_NONE')));
+
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
 try {
