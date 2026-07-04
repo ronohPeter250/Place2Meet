@@ -376,7 +376,11 @@ service cloud.firestore {
           && request.resource.data.venueId == resource.data.venueId
           && !('attendeeCount' in request.resource.data.diff(resource.data).affectedKeys())
           && !('attendeeCounts' in request.resource.data.diff(resource.data).affectedKeys())
-          && !('attendeeIds' in request.resource.data.diff(resource.data).affectedKeys()))
+          && !('attendeeIds' in request.resource.data.diff(resource.data).affectedKeys())
+          // Capacity can never drop below people already registered — enforced
+          // against the pre-write attendeeCount so a concurrent join can't slip
+          // through the client-side check.
+          && request.resource.data.get('capacity', 0) >= resource.data.get('attendeeCount', 0))
         ||
         (isActiveUser(request.auth.uid)
           && request.resource.data.diff(resource.data).affectedKeys()

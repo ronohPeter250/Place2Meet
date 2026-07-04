@@ -188,6 +188,10 @@ await ok('owner GETs own checkin', getDoc(doc(A, 'checkins/A_v1')));
 await no('non-owner cannot GET a specific checkin (anti-stalking)', getDoc(doc(C, 'checkins/A_v1')));
 await no('oversized lastMessage denied', updateDoc(doc(A, 'chats/A_B'), { lastMessage: 'x'.repeat(2001), lastMessageAt: serverTimestamp() }));
 
+console.log('\n[R7 fix — event capacity floor server-side]');
+await no('business lowers capacity below attendeeCount denied', updateDoc(doc(BIZ, 'events/E2'), { capacity: 0 }));
+await ok('business raises capacity allowed', updateDoc(doc(BIZ, 'events/E2'), { capacity: 5 }));
+
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
 try {

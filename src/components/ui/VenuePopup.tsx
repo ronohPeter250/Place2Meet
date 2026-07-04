@@ -50,15 +50,12 @@ export const VenuePopup = React.memo(function VenuePopup({
     return () => { cancelled = true; };
   }, [venue?.id, visible]);
 
-  const handleCheckIn = useCallback(async () => {
+  const handleCheckIn = useCallback(() => {
     if (!venue) return;
+    // The host closes the popup on a successful check-in, so don't refetch counts
+    // here — that raced the (un-awaited) write and set state after unmount. Fresh
+    // counts load from the effect the next time the popup opens.
     onCheckIn(venue.id);
-    try {
-      const c = await getVenueActiveCounts(venue.id);
-      setLiveCounts(c);
-    } catch (err) {
-      console.error('[VenuePopup] refresh counts failed:', err);
-    }
   }, [venue, onCheckIn]);
 
   if (!venue) return null;

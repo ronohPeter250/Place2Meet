@@ -224,20 +224,22 @@ export async function updateEvent(
   if (!uid) throw new Error('Unauthorized');
 
   const eventRef = doc(db, 'events', eventId);
-  const snap = await getDoc(eventRef);
-  if (!snap.exists()) throw new Error('Event not found');
-  const current = snap.data();
-  if (current?.createdBy !== uid) {
-    throw new Error('Unauthorized: only event creator can update');
-  }
-  // Capacity can't drop below the people already registered — otherwise the card
-  // would show an over-capacity "X/Y" with X > Y.
-  const newCap = (data as { capacity?: number }).capacity;
-  if (typeof newCap === 'number' && newCap < (current?.attendeeCount ?? 0)) {
-    throw new Error('Capacity below current attendees');
-  }
-
-  await updateDoc(eventRef, data);
+  // Transaction so the capacity-vs-attendeeCount check and the write are atomic —
+  // a concurrent registerForEvent can't slip a join between a plain read and
+  // write and leave attendeeCount > capacity. (The rule also enforces this floor.)
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(eventRef);
+    if (!snap.exists()) throw new Error('Event not found');
+    const current = snap.data();
+    if (current?.createdBy !== uid) {
+      throw new Error('Unauthorized: only event creator can update');
+    }
+    const newCap = (data as { capacity?: number }).capacity;
+    if (typeof newCap === 'number' && newCap < (current?.attendeeCount ?? 0)) {
+      throw new Error('Capacity below current attendees');
+    }
+    tx.update(eventRef, data);
+  });
 }
 
 export async function cancelRegistration(eventId: string): Promise<void> {

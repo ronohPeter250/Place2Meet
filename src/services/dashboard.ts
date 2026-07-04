@@ -102,26 +102,13 @@ export async function getDashboardStats(venueId: string, period: DashboardPeriod
     const checkinsSnap = await getDocs(checkinsQ);
     dailyAverage = Math.round(checkinsSnap.size / daysBack);
 
-    // Resolve each check-in's user gender (cache by userId so duplicate users
-    // hit Firestore once)
-    const userIds = Array.from(
-      new Set(checkinsSnap.docs.map(d => (d.data() as { userId: string }).userId))
-    );
-    const userDocs = await Promise.all(
-      userIds.map(uid => getDoc(doc(db, 'users', uid)))
-    );
-    const userGenders = new Map<string, 'male' | 'female' | 'other'>();
-    for (const u of userDocs) {
-      if (!u.exists()) continue;
-      const g = (u.data() as { gender?: 'male' | 'female' | 'other' }).gender;
-      if (g) userGenders.set(u.id, g);
-    }
-
+    // Gender is denormalized onto the check-in at check-in time, so read it
+    // directly — no per-user fetch (which, with Promise.all, would throw and
+    // zero the whole chart the moment one user's doc was unreadable/suspended).
     for (const ckin of checkinsSnap.docs) {
-      const userId = (ckin.data() as { userId: string }).userId;
-      const gender = userGenders.get(userId) ?? 'other';
-      if (gender === 'male') maleCount++;
-      else if (gender === 'female') femaleCount++;
+      const g = (ckin.data() as { gender?: 'male' | 'female' | 'other' }).gender;
+      if (g === 'male') maleCount++;
+      else if (g === 'female') femaleCount++;
       else otherCount++;
     }
   } catch (err) {
