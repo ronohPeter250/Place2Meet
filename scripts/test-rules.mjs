@@ -179,6 +179,10 @@ await no('checkin at non-existent venue denied', setDoc(doc(A, 'checkins/A_ghost
 await no('register with spoofed genderField denied', setDoc(doc(A, 'registrations/A_E9'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'female', timestamp: serverTimestamp() }));
 await no('register with mismatched regId denied', setDoc(doc(A, 'registrations/WRONGID'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
 await ok('register with matching genderField + regId allowed', setDoc(doc(A, 'registrations/A_E9'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
+// R20 fix — an incomplete-profile user with a junk gender can't register a non-enum
+// genderField (which would spawn a junk attendeeCounts bucket and inflate the total).
+await ok('incomplete user can set a junk gender raw', updateDoc(doc(G, 'users/G'), { gender: 'zzz' }));
+await no('register with junk (non-enum) genderField denied', setDoc(doc(G, 'registrations/G_E9'), { userId: 'G', eventId: 'E9', status: 'registered', genderField: 'zzz', timestamp: serverTimestamp() }));
 
 console.log('\n[R5 fixes — profileComplete monotonic / genderField pinned on re-join]');
 await no('cannot downgrade profileComplete true->false (monotonic)', updateDoc(doc(D, 'users/D'), { profileComplete: false }));

@@ -92,6 +92,8 @@ service cloud.firestore {
         && request.resource.data.get('attendeeCount', 0) == resource.data.get('attendeeCount', 0) + 1
         && request.resource.data.get('attendeeCount', 0) <= resource.data.get('capacity', 0)
         && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) + 1
+        // Defense-in-depth: only a known gender bucket may be incremented.
+        && gender in ['male', 'female', 'other']
         && otherAttendeeCountsUnchanged(gender);
     }
 
@@ -437,6 +439,11 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && regId == request.auth.uid + '_' + request.resource.data.eventId
         && request.resource.data.genderField == profileGender()
+        // genderField must be a KNOWN bucket — profileGender() returns the raw
+        // users.gender, which for an incomplete profile is an unvalidated string;
+        // without this, a raw-client user could register with a junk gender and
+        // spawn an attendeeCounts.<junk> key that inflates the total vs m+f+other.
+        && request.resource.data.genderField in ['male', 'female', 'other']
         // Can't register for an event whose owning business is suspended/blocked —
         // a moderated-off business must not keep collecting registrations.
         && isActiveBusiness(get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.venueId);

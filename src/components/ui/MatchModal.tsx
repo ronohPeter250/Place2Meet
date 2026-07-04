@@ -29,11 +29,14 @@ export const MatchModal = React.memo(function MatchModal({
   const matchAge = useMemo(() => {
     if (!matchedUser?.birthday) return '';
     const bd = new Date(matchedUser.birthday);
+    // Guard an unparseable birthday (legacy/corrupt data) — otherwise `a` is NaN
+    // and the modal renders ", NaN" after the name. Mirrors ageFromBirthday.
+    if (isNaN(bd.getTime())) return '';
     const today = new Date();
     let a = today.getFullYear() - bd.getFullYear();
     const m = today.getMonth() - bd.getMonth();
     if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) a--;
-    return `, ${a}`;
+    return Number.isFinite(a) && a >= 0 ? `, ${a}` : '';
   }, [matchedUser?.birthday]);
 
   return (
