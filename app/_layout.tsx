@@ -20,7 +20,7 @@ I18nManager.forceRTL(false);
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Rubik_300Light,
     Rubik_400Regular,
     Rubik_500Medium,
@@ -30,15 +30,19 @@ export default function RootLayout() {
     Lobster_400Regular,
   });
 
+  // Treat a font-load ERROR as ready-but-degraded: proceed with system fonts and
+  // dismiss the splash, rather than hanging forever on the native splash.
+  const ready = fontsLoaded || !!fontError;
+
   const onLayoutRootView = useCallback(async () => {
-    if (fontsLoaded) {
+    if (ready) {
       await SplashScreen.hideAsync();
     }
-  }, [fontsLoaded]);
+  }, [ready]);
 
-  if (!fontsLoaded) {
+  if (!ready) {
     return (
-      <View style={styles.loading}>
+      <View style={styles.loading} onLayout={onLayoutRootView}>
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );

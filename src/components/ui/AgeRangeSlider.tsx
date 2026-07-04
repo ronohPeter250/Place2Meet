@@ -124,7 +124,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderWidth: 3,
     borderColor: colors.white,
-    marginRight: -12,
+    // The thumb is anchored by `left`, so center it on the value with a negative
+    // marginLeft (marginRight has no effect on a left-anchored absolute node).
+    marginLeft: -12,
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
