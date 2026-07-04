@@ -129,7 +129,12 @@ service cloud.firestore {
           && !request.resource.data.diff(resource.data).affectedKeys().hasAny(userAdminFields())
           && (!(resource.data.get('profileComplete', false) != true
                 && request.resource.data.get('profileComplete', false) == true)
-              || profileFieldsValid()));
+              || profileFieldsValid())
+          // Gender is frozen once the profile is complete — otherwise a user could
+          // flip gender, check in (freezing the fake gender on the presence entry),
+          // and flip back to spoof the per-gender venue tally.
+          && (resource.data.get('profileComplete', false) != true
+              || request.resource.data.get('gender', '') == resource.data.get('gender', '')));
       allow delete: if false;
 
       match /adminData/private {
@@ -196,6 +201,8 @@ service cloud.firestore {
         && checkinId == request.auth.uid + '_' + request.resource.data.venueId
         && request.resource.data.gender == profileGender()
         && !exists(/databases/$(database)/documents/venue_presence_entries/$(request.resource.data.entryId))
+        && (exists(/databases/$(database)/documents/venues/$(request.resource.data.venueId))
+            || exists(/databases/$(database)/documents/businesses/$(request.resource.data.venueId)))
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
@@ -365,7 +372,9 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.resource.data.userId == request.auth.uid;
+        && request.resource.data.userId == request.auth.uid
+        && regId == request.auth.uid + '_' + request.resource.data.eventId
+        && request.resource.data.genderField == profileGender();
       // eventId is immutable and genderField can only change on a re-join
       // (cancelled -> registered). Otherwise a user could mutate genderField while
       // registered and then leave, decrementing a DIFFERENT bucket than they

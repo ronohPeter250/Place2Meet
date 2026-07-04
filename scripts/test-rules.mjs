@@ -34,6 +34,12 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'checkins/U_BIZ'), { userId: 'U', venueId: 'BIZ', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
   // A victim's presence entry (for the delete-IDOR test).
   await setDoc(doc(db, 'venue_presence_entries/VICT'), { venueId: 'vX', gender: 'female', expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
+  // Venues that the check-in tests target (check-in now requires the venue to exist).
+  for (const v of ['v1', 'v2', 'v3', 'v4', 'v9', 'vP', 'vR', 'vX']) {
+    await setDoc(doc(db, 'venues/' + v), { name: v });
+  }
+  // G = incomplete profile with no gender yet (to verify onboarding can still set it).
+  await setDoc(doc(db, 'users/G'), { name: 'G', profileComplete: false });
 });
 
 const A = testEnv.authenticatedContext('A').firestore();
@@ -42,6 +48,7 @@ const C = testEnv.authenticatedContext('C').firestore();
 const D = testEnv.authenticatedContext('D').firestore();
 const E = testEnv.authenticatedContext('E').firestore();
 const F = testEnv.authenticatedContext('F').firestore();
+const G = testEnv.authenticatedContext('G').firestore();
 const BIZ = testEnv.authenticatedContext('BIZ').firestore();
 
 console.log('\n[swipes]');
@@ -156,6 +163,14 @@ const chkOut = writeBatch(A);
 chkOut.delete(doc(A, 'venue_presence_entries/ENT1'));
 chkOut.delete(doc(A, 'checkins/A_vP'));
 await ok('checkout deletes entry + checkin together', chkOut.commit());
+
+console.log('\n[R4 fixes — gender immutable / venue existence / registration gender]');
+await no('complete profile cannot change gender', updateDoc(doc(D, 'users/D'), { gender: 'female' }));
+await ok('incomplete profile can set gender (onboarding)', updateDoc(doc(G, 'users/G'), { gender: 'female' }));
+await no('checkin at non-existent venue denied', setDoc(doc(A, 'checkins/A_ghost'), { userId: 'A', venueId: 'ghost', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'cg1' }));
+await no('register with spoofed genderField denied', setDoc(doc(A, 'registrations/A_E9'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'female', timestamp: serverTimestamp() }));
+await no('register with mismatched regId denied', setDoc(doc(A, 'registrations/WRONGID'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
+await ok('register with matching genderField + regId allowed', setDoc(doc(A, 'registrations/A_E9'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
