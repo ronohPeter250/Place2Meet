@@ -7,6 +7,7 @@ import { GenderFemaleSmallIcon, GenderMaleSmallIcon, GenderOtherSmallIcon } from
 import { colors } from '../../theme';
 import { he } from '../../i18n/he';
 import { Gender } from '../../hooks/useOnboarding';
+import { AGE_FILTER_MAX } from '../../services/swipes';
 
 const genderFilterIcons: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
   female: GenderFemaleSmallIcon,
@@ -110,10 +111,10 @@ export const FilterModal = React.memo(function FilterModal({
 
           <View style={styles.section}>
             <View style={styles.ageHeaderRow}>
-              <Text style={styles.ageValues}>{ageRange[0]}-{ageRange[1]}</Text>
+              <Text style={styles.ageValues}>{ageRange[0]}-{ageRange[1]}{ageRange[1] >= AGE_FILTER_MAX ? '+' : ''}</Text>
               <Text style={styles.sectionTitle}>{he.filter.ageRange}</Text>
             </View>
-            <AgeRangeSlider min={18} max={65} value={ageRange} onChange={setAgeRange} />
+            <AgeRangeSlider min={18} max={AGE_FILTER_MAX} value={ageRange} onChange={setAgeRange} />
           </View>
 
           <View style={styles.section}>

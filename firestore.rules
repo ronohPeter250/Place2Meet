@@ -48,9 +48,16 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/swipes/$(other + '_' + me)).data.action == 'like';
     }
 
-    function registrationGender() {
-      let gender = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.gender;
-      return gender == 'male' || gender == 'female' ? gender : 'other';
+    // The registration doc that pairs with an event join/leave. Join creates it in
+    // the SAME write (getAfter sees it), so a client can't inflate attendeeIds/count
+    // without a real registration. Leave flips its status (get reads the pre-write
+    // doc, which still carries the gender bucket it was counted under — so a gender
+    // change between join and leave can't brick unregistration).
+    function joinRegData(eventId) {
+      return getAfter(/databases/$(database)/documents/registrations/$(request.auth.uid + '_' + eventId)).data;
+    }
+    function leaveRegData(eventId) {
+      return get(/databases/$(database)/documents/registrations/$(request.auth.uid + '_' + eventId)).data;
     }
 
     function otherAttendeeCountsUnchanged(gender) {
@@ -59,9 +66,13 @@ service cloud.firestore {
         && (gender == 'other' || request.resource.data.get('attendeeCounts', {}).get('other', 0) == resource.data.get('attendeeCounts', {}).get('other', 0));
     }
 
-    function isJoiningEvent() {
-      let gender = registrationGender();
-      return !(request.auth.uid in resource.data.get('attendeeIds', []))
+    function isJoiningEvent(eventId) {
+      let reg = joinRegData(eventId);
+      let gender = reg.get('genderField', 'other');
+      return reg.get('status', '') == 'registered'
+        && reg.get('userId', '') == request.auth.uid
+        && reg.get('eventId', '') == eventId
+        && !(request.auth.uid in resource.data.get('attendeeIds', []))
         && request.auth.uid in request.resource.data.get('attendeeIds', [])
         && request.resource.data.get('attendeeIds', []).size() == resource.data.get('attendeeIds', []).size() + 1
         && request.resource.data.get('attendeeIds', []).hasAll(resource.data.get('attendeeIds', []))
@@ -71,8 +82,8 @@ service cloud.firestore {
         && otherAttendeeCountsUnchanged(gender);
     }
 
-    function isLeavingEvent() {
-      let gender = registrationGender();
+    function isLeavingEvent(eventId) {
+      let gender = leaveRegData(eventId).get('genderField', 'other');
       return request.auth.uid in resource.data.get('attendeeIds', [])
         && !(request.auth.uid in request.resource.data.get('attendeeIds', []))
         && request.resource.data.get('attendeeIds', []).size() == resource.data.get('attendeeIds', []).size() - 1
@@ -271,7 +282,7 @@ service cloud.firestore {
         (isActiveUser(request.auth.uid)
           && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['attendeeCount', 'attendeeCounts', 'attendeeIds'])
-          && (isJoiningEvent() || isLeavingEvent()))
+          && (isJoiningEvent(eventId) || isLeavingEvent(eventId)))
       );
       allow delete: if false;
     }

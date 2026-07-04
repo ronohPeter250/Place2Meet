@@ -37,6 +37,7 @@ export default function EditProfileScreen() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [bio, setBio] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
+  const [originalMain, setOriginalMain] = useState<string | undefined>(undefined);
   const [relationshipType, setRelationshipType] = useState<RelationshipType[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -50,6 +51,7 @@ export default function EditProfileScreen() {
           setProfile(data);
           setBio(data.bio ?? '');
           setPhotos(data.photos ?? []);
+          setOriginalMain(data.photos?.[0]);
           setRelationshipType(data.relationshipType ?? []);
         }
       } catch (err) {
@@ -68,12 +70,11 @@ export default function EditProfileScreen() {
   const handleSave = useCallback(async () => {
     if (!user || saving) return;
 
-    // The main photo (index 0) must contain a face (covers removal-shift).
+    // The main photo (index 0) must contain a face. Re-check whenever it changed
+    // identity from the loaded profile — covers a newly-picked local photo AND a
+    // remote photo that shifted into slot 0 after the original main was removed.
     const main = photos[0];
-    const mainIsLocal =
-      !!main &&
-      (main.startsWith('file://') || main.startsWith('content://') || main.startsWith('ph://'));
-    if (mainIsLocal) {
+    if (main && main !== originalMain) {
       const ok = await checkFace(main);
       if (!ok) {
         Alert.alert('', he.onboarding.photos.faceRequired);

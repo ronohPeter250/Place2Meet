@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, FlatList, StyleSheet, Alert, Modal, TouchableOpacity } from 'react-native';
+import { useState, useCallback, useMemo, useRef } from 'react';
+import { View, Text, FlatList, StyleSheet, Alert, Modal, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import * as Location from 'expo-location';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
 import { EventCard } from '../../../src/components/ui/EventCard';
 import { Button } from '../../../src/components/ui/Button';
 import { CalendarPlusIcon } from '../../../src/components/ui/SvgIcons';
-import { getEvents, registerForEvent, AppEvent } from '../../../src/services/events';
+import { getEvents, registerForEvent, getMyRegisteredEventIds, AppEvent } from '../../../src/services/events';
 import { getAllMapVenues } from '../../../src/services/venues';
 import { colors, typography, borderRadius } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
@@ -35,24 +36,33 @@ export default function EventsScreen() {
   const [userCoords, setUserCoords] = useState<Coords | null>(null);
   const [venueCoords, setVenueCoords] = useState<Map<string, Coords>>(new Map());
   const [locating, setLocating] = useState(false);
+  const [registeredIds, setRegisteredIds] = useState<Set<string>>(new Set());
   const locatingRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await getEvents();
-        if (!cancelled) {
-          setEvents(data);
-          setLoading(false);
+  // Reload on every focus so counts (and which events you're registered to)
+  // are fresh when returning to the tab — not stale from the first mount.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          const [data, regIds] = await Promise.all([
+            getEvents(),
+            getMyRegisteredEventIds().catch(() => [] as string[]),
+          ]);
+          if (!cancelled) {
+            setEvents(data);
+            setRegisteredIds(new Set(regIds));
+          }
+        } catch (err) {
+          console.error('[EventsScreen] events fetch failed:', err);
+        } finally {
+          if (!cancelled) setLoading(false);
         }
-      } catch (err) {
-        console.error('[EventsScreen] events fetch failed:', err);
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+      })();
+      return () => { cancelled = true; };
+    }, [])
+  );
 
   const handleEventPress = useCallback((event: AppEvent) => {
     setSelectedEvent(event);
@@ -65,9 +75,11 @@ export default function EventsScreen() {
     setRegistering(true);
     try {
       await registerForEvent(selectedEvent.id);
+      // Mark registered immediately so the card stops offering "reserve".
+      setRegisteredIds(prev => new Set(prev).add(selectedEvent.id));
       Alert.alert('נרשמת בהצלחה!', 'ההרשמה לאירוע אושרה.');
       setShowConfirm(false);
-      // Refresh events
+      // Refresh events so the attendee count reflects the new registration.
       const data = await getEvents();
       setEvents(data);
     } catch (err: unknown) {
@@ -152,9 +164,10 @@ export default function EventsScreen() {
       attendeeCount={item.attendeeCount}
       capacity={item.capacity}
       attendeeCounts={item.attendeeCounts}
+      hideReserve={registeredIds.has(item.id)}
       onPress={() => handleEventPress(item)}
     />
-  ), [handleEventPress]);
+  ), [handleEventPress, registeredIds]);
 
   const keyExtractor = useCallback((item: AppEvent) => item.id, []);
 
@@ -184,7 +197,11 @@ export default function EventsScreen() {
         </TouchableOpacity>
       </View>
 
-      {events.length === 0 && !loading ? (
+      {loading ? (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : events.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>{he.events.noEvents}</Text>
           <Text style={styles.emptySubtext}>{he.events.noEventsSubtext}</Text>

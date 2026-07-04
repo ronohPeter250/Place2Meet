@@ -4,7 +4,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import { readFileSync } from 'node:fs';
 import {
   doc, setDoc, updateDoc, getDoc, getDocs, collection, query, where, serverTimestamp,
-  GeoPoint, Timestamp,
+  GeoPoint, Timestamp, writeBatch,
 } from 'firebase/firestore';
 
 let passed = 0;
@@ -25,6 +25,10 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   // D = a fully-filled profile (still incomplete flag); E = missing gender.
   await setDoc(doc(db, 'users/D'), { name: 'D', gender: 'male', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
   await setDoc(doc(db, 'users/E'), { name: 'E', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
+  // Business + events for the join/leave-coupling tests.
+  await setDoc(doc(db, 'businesses/BIZ'), { name: 'Biz' });
+  await setDoc(doc(db, 'events/E1'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 } });
+  await setDoc(doc(db, 'events/E2'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 1, attendeeCount: 1, attendeeIds: ['X'], attendeeCounts: { male: 1, female: 0, other: 0 } });
 });
 
 const A = testEnv.authenticatedContext('A').firestore();
@@ -84,6 +88,26 @@ await ok('A stamps OWN reads', updateDoc(doc(A, 'chats/A_B'), { ['reads.A']: ser
 await no('A stamps OTHER user reads denied', updateDoc(doc(A, 'chats/A_B'), { ['reads.B']: serverTimestamp() }));
 await no('forge lastSenderId as other user denied', updateDoc(doc(A, 'chats/A_B'), { lastSenderId: 'B', lastMessage: 'x', lastMessageAt: serverTimestamp() }));
 await ok('legit metadata update (own sender + server time)', updateDoc(doc(A, 'chats/A_B'), { lastSenderId: 'A', lastMessage: 'hi', lastMessageAt: serverTimestamp() }));
+
+console.log('\n[events — join/leave coupled to registration]');
+// Legit join: create registration + bump the event counts in ONE batch.
+const joinBatch = writeBatch(A);
+joinBatch.set(doc(A, 'registrations/A_E1'), { userId: 'A', eventId: 'E1', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
+joinBatch.update(doc(A, 'events/E1'), { attendeeCount: 1, attendeeIds: ['A'], 'attendeeCounts.male': 1 });
+await ok('join event (registration + event in one batch)', joinBatch.commit());
+// Injection: bump attendeeIds/count on the event with NO registration.
+await no('attendeeIds injection without registration denied', updateDoc(doc(D, 'events/E1'), { attendeeCount: 2, attendeeIds: ['A', 'D'], attendeeCounts: { male: 1, female: 0, other: 1 } }));
+// Gender-agnostic leave: A registered as male; leave decrements the STORED bucket
+// even though the user's current gender is irrelevant now.
+const leaveBatch = writeBatch(A);
+leaveBatch.update(doc(A, 'registrations/A_E1'), { status: 'cancelled' });
+leaveBatch.update(doc(A, 'events/E1'), { attendeeCount: 0, attendeeIds: [], 'attendeeCounts.male': 0 });
+await ok('leave event using stored genderField (male)', leaveBatch.commit());
+// Capacity: E2 is full (1/1); a join pushing it to 2 must be denied.
+const capBatch = writeBatch(A);
+capBatch.set(doc(A, 'registrations/A_E2'), { userId: 'A', eventId: 'E2', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
+capBatch.update(doc(A, 'events/E2'), { attendeeCount: 2, attendeeIds: ['X', 'A'], 'attendeeCounts.male': 2 });
+await no('join past capacity denied', capBatch.commit());
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

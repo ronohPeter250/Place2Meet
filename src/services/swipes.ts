@@ -81,6 +81,10 @@ function ageFromBirthday(birthday?: string): number | null {
   return a;
 }
 
+// The age slider's upper bound. When ageRange[1] sits at this value it means
+// "and older" (no upper cap) — otherwise every user above it would be hidden.
+export const AGE_FILTER_MAX = 65;
+
 // Applies the user-selected swipe filters. Empty gender/relationship selections
 // mean "no restriction". A missing birthday is not filtered out on age (we don't
 // hide users just because a field is absent).
@@ -92,7 +96,11 @@ function matchesFilters(u: UserProfile, f?: SwipeFilters): boolean {
     if (!urt.some(rt => f.relationshipTypes.includes(rt))) return false;
   }
   const age = ageFromBirthday(u.birthday);
-  if (age !== null && (age < f.ageRange[0] || age > f.ageRange[1])) return false;
+  if (age !== null) {
+    if (age < f.ageRange[0]) return false;
+    // ageRange[1] at the slider max means "and older" — don't cap.
+    if (f.ageRange[1] < AGE_FILTER_MAX && age > f.ageRange[1]) return false;
+  }
   return true;
 }
 
