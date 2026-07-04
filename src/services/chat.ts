@@ -208,7 +208,9 @@ export async function createChatForMatch(
 // Runs at most once per app session (best-effort). Reset to false only on a
 // hard failure of the initial query so a later open can retry.
 let reconcileInFlight = false;
-let reconcileDoneThisSession = false;
+// Keyed by uid (not a bare boolean) so a second account signed in during the same
+// app session still reconciles instead of inheriting the first user's "done" flag.
+let reconcileDoneForUid: string | null = null;
 
 /**
  * Recover matches whose chat was never created (a match-time failure or the
@@ -220,7 +222,7 @@ let reconcileDoneThisSession = false;
  */
 export async function reconcileMissingChats(): Promise<number> {
   const uid = auth.currentUser?.uid;
-  if (!uid || reconcileInFlight || reconcileDoneThisSession) return 0;
+  if (!uid || reconcileInFlight || reconcileDoneForUid === uid) return 0;
   reconcileInFlight = true;
 
   try {
@@ -257,7 +259,7 @@ export async function reconcileMissingChats(): Promise<number> {
         console.error('[reconcileMissingChats] create failed for', c.other, err);
       }
     }
-    reconcileDoneThisSession = true;
+    reconcileDoneForUid = uid;
     return created;
   } finally {
     reconcileInFlight = false;

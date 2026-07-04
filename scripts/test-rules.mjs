@@ -172,6 +172,11 @@ await no('register with spoofed genderField denied', setDoc(doc(A, 'registration
 await no('register with mismatched regId denied', setDoc(doc(A, 'registrations/WRONGID'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
 await ok('register with matching genderField + regId allowed', setDoc(doc(A, 'registrations/A_E9'), { userId: 'A', eventId: 'E9', status: 'registered', genderField: 'male', timestamp: serverTimestamp() }));
 
+console.log('\n[R5 fixes — profileComplete monotonic / genderField pinned on re-join]');
+await no('cannot downgrade profileComplete true->false (monotonic)', updateDoc(doc(D, 'users/D'), { profileComplete: false }));
+await no('re-join event with spoofed genderField denied', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'female' }));
+await ok('re-join event with real genderField allowed', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'male' }));
+
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
 try {

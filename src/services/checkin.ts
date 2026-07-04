@@ -78,10 +78,11 @@ export async function checkInToVenue(venueId: string): Promise<void> {
   });
 
   if (same) {
-    // Already present here — just extend the window, reusing the same entry so no
-    // duplicate presence is created.
+    // Already present here — extend the window, reusing the same entry so no
+    // duplicate presence is created. Use set (not update) so a stale check-in
+    // whose entry was already cleaned still succeeds (re-creates the entry).
     const entryId = (same.data() as { entryId: string }).entryId;
-    batch.update(doc(db, 'venue_presence_entries', entryId), { expiresAt });
+    batch.set(doc(db, 'venue_presence_entries', entryId), { venueId, gender, expiresAt });
     batch.update(doc(db, 'checkins', checkinId), { expiresAt });
   } else {
     const entryRef = doc(collection(db, 'venue_presence_entries'));
