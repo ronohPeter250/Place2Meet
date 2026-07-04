@@ -15,34 +15,58 @@ export interface CheckIn {
   id: string;
   userId: string;
   venueId: string;
+  gender?: 'male' | 'female' | 'other';
   timestamp: Timestamp;
   expiresAt: Timestamp;
+  entryId?: string;
 }
 
 const CHECKIN_DURATION_HOURS = 4;
+type Gender = 'male' | 'female' | 'other';
 
+function normalizeGender(g: unknown): Gender {
+  return g === 'male' || g === 'female' ? g : 'other';
+}
+
+// A check-in writes two docs:
+//  - checkins/{uid}_{venueId} (PRIVATE): the user's own record, so they can
+//    check out and so the map knows whether *they* are checked in.
+//  - venue_presence_entries/{autoId} (PUBLIC read): the identity-free tally
+//    entry — { venueId, gender, expiresAt } with NO userId — so anyone can count
+//    per-gender presence per venue WITHOUT being able to enumerate who is where.
+// The two are coupled by the rules: an entry can only be created/deleted by the
+// owner of the matching check-in that references it.
 export async function checkInToVenue(venueId: string): Promise<void> {
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error('Unauthorized');
 
-  // Fetch existing check-ins
-  const checkinsRef = collection(db, 'checkins');
-  const q = query(checkinsRef, where('userId', '==', uid));
-  const snapshot = await getDocs(q);
+  const userSnap = await getDoc(doc(db, 'users', uid));
+  const gender = normalizeGender((userSnap.data() as { gender?: string } | undefined)?.gender);
 
-  const expiresAt = new Date();
-  expiresAt.setHours(expiresAt.getHours() + CHECKIN_DURATION_HOURS);
+  // A user is present at one venue at a time — remove any prior check-in (and its
+  // public entry) before adding the new one.
+  const existing = await getDocs(query(collection(db, 'checkins'), where('userId', '==', uid)));
 
+  const expiresAt = Timestamp.fromDate(
+    new Date(Date.now() + CHECKIN_DURATION_HOURS * 3600 * 1000),
+  );
   const checkinId = `${uid}_${venueId}`;
+  const entryRef = doc(collection(db, 'venue_presence_entries'));
 
-  // Atomic batch: delete old check-ins + create new one
   const batch = writeBatch(db);
-  snapshot.docs.forEach(d => batch.delete(d.ref));
+  existing.docs.forEach(d => {
+    const oldEntryId = (d.data() as { entryId?: string }).entryId;
+    if (oldEntryId) batch.delete(doc(db, 'venue_presence_entries', oldEntryId));
+    batch.delete(d.ref);
+  });
+  batch.set(entryRef, { venueId, gender, expiresAt });
   batch.set(doc(db, 'checkins', checkinId), {
     userId: uid,
     venueId,
+    gender,
     timestamp: serverTimestamp(),
-    expiresAt: Timestamp.fromDate(expiresAt),
+    expiresAt,
+    entryId: entryRef.id,
   });
   await batch.commit();
 }
@@ -51,80 +75,47 @@ export async function checkOut(): Promise<void> {
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error('Unauthorized');
 
-  const checkinsRef = collection(db, 'checkins');
-  const q = query(checkinsRef, where('userId', '==', uid));
-  const snapshot = await getDocs(q);
-
-  if (snapshot.empty) return;
+  const existing = await getDocs(query(collection(db, 'checkins'), where('userId', '==', uid)));
+  if (existing.empty) return;
 
   const batch = writeBatch(db);
-  snapshot.docs.forEach(d => batch.delete(d.ref));
+  existing.docs.forEach(d => {
+    const oldEntryId = (d.data() as { entryId?: string }).entryId;
+    if (oldEntryId) batch.delete(doc(db, 'venue_presence_entries', oldEntryId));
+    batch.delete(d.ref);
+  });
   await batch.commit();
 }
 
-export async function getActiveCheckInsForVenue(venueId: string): Promise<CheckIn[]> {
-  const checkinsRef = collection(db, 'checkins');
-  const now = Timestamp.now();
-  const q = query(
-    checkinsRef,
-    where('venueId', '==', venueId),
-    where('expiresAt', '>', now)
-  );
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(d => ({
-    id: d.id,
-    ...d.data(),
-  })) as CheckIn[];
-}
-
-// Computes live gender counts of currently checked-in users for a venue.
-// Reads from checkins (filtered by expiresAt > now), then resolves each user's
-// gender from the users collection. Used by the map's VenuePopup so the counts
-// reflect actual check-ins rather than a stale cached value.
+// Live per-gender counts for a venue, read from the identity-free presence
+// entries (filtered by expiry). No check-in listing is involved, so no one can
+// enumerate who is physically present — only the aggregate is exposed.
 export async function getVenueActiveCounts(
-  venueId: string
+  venueId: string,
 ): Promise<{ male: number; female: number; other: number }> {
-  const checkinsRef = collection(db, 'checkins');
   const now = Timestamp.now();
-  const q = query(
-    checkinsRef,
+  const snap = await getDocs(query(
+    collection(db, 'venue_presence_entries'),
     where('venueId', '==', venueId),
-    where('expiresAt', '>', now)
-  );
-  const snapshot = await getDocs(q);
-  if (snapshot.empty) return { male: 0, female: 0, other: 0 };
-
-  const userIds = Array.from(
-    new Set(snapshot.docs.map(d => (d.data() as { userId: string }).userId))
-  );
-
-  // allSettled: one unreadable/missing user doc must not zero out the whole count.
-  const results = await Promise.allSettled(
-    userIds.map(uid => getDoc(doc(db, 'users', uid)))
-  );
-
+    where('expiresAt', '>', now),
+  ));
   const counts = { male: 0, female: 0, other: 0 };
-  for (const result of results) {
-    if (result.status !== 'fulfilled' || !result.value.exists()) continue;
-    const gender = (result.value.data() as { gender?: 'male' | 'female' | 'other' }).gender;
-    if (gender === 'male') counts.male++;
-    else if (gender === 'female') counts.female++;
-    else counts.other++;
+  for (const d of snap.docs) {
+    counts[normalizeGender((d.data() as { gender?: string }).gender)]++;
   }
   return counts;
 }
 
-// Returns a Map of venueId → active check-in count, computed from a single
-// query over all non-expired check-ins. The map screen uses this so each
-// marker can show the live count without N round-trips.
+// venueId -> active presence count, from a single query over all non-expired
+// entries. Lets the map show a live badge per marker without N round-trips.
 export async function getAllActiveCheckinCounts(): Promise<Map<string, number>> {
-  const checkinsRef = collection(db, 'checkins');
   const now = Timestamp.now();
-  const q = query(checkinsRef, where('expiresAt', '>', now));
-  const snapshot = await getDocs(q);
-
+  const snap = await getDocs(query(
+    collection(db, 'venue_presence_entries'),
+    where('expiresAt', '>', now),
+  ));
   const counts = new Map<string, number>();
-  for (const d of snapshot.docs) {
+  for (const d of snap.docs) {
     const venueId = (d.data() as { venueId: string }).venueId;
     counts.set(venueId, (counts.get(venueId) ?? 0) + 1);
   }
@@ -135,19 +126,13 @@ export async function getCurrentUserCheckIn(): Promise<CheckIn | null> {
   const uid = auth.currentUser?.uid;
   if (!uid) return null;
 
-  const checkinsRef = collection(db, 'checkins');
   const now = Timestamp.now();
-  const q = query(
-    checkinsRef,
+  const snap = await getDocs(query(
+    collection(db, 'checkins'),
     where('userId', '==', uid),
-    where('expiresAt', '>', now)
-  );
-  const snapshot = await getDocs(q);
+    where('expiresAt', '>', now),
+  ));
+  if (snap.empty) return null;
 
-  if (snapshot.empty) return null;
-
-  return {
-    id: snapshot.docs[0].id,
-    ...snapshot.docs[0].data(),
-  } as CheckIn;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() } as CheckIn;
 }

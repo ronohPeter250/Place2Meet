@@ -3,7 +3,7 @@
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import {
-  doc, setDoc, updateDoc, getDoc, getDocs, collection, query, where, serverTimestamp,
+  doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, where, serverTimestamp,
   GeoPoint, Timestamp, writeBatch,
 } from 'firebase/firestore';
 
@@ -126,6 +126,25 @@ await no('regular user lists another venue checkins denied', getDocs(query(colle
 // Registration genderField immutable while registered; cancel keeps it.
 await no('mutate genderField while registered denied', updateDoc(doc(A, 'registrations/A_E3'), { genderField: 'female' }));
 await ok('cancel keeps genderField allowed', updateDoc(doc(A, 'registrations/A_E3'), { status: 'cancelled' }));
+
+console.log('\n[venue_presence_entries — identity-free live counts coupled to check-in]');
+// Legit check-in: private check-in + public entry (referencing it) in one batch.
+const ci = writeBatch(A);
+ci.set(doc(A, 'checkins/A_vP'), { userId: 'A', venueId: 'vP', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT1' });
+ci.set(doc(A, 'venue_presence_entries/ENT1'), { venueId: 'vP', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) });
+await ok('check-in creates coupled presence entry', ci.commit());
+// Forge a presence entry with no matching check-in.
+await no('presence entry without matching check-in denied', setDoc(doc(A, 'venue_presence_entries/FORGE'), { venueId: 'vQ', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
+// Gender must match the check-in it is coupled to.
+const gm = writeBatch(A);
+gm.set(doc(A, 'checkins/A_vR'), { userId: 'A', venueId: 'vR', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT2' });
+gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female', expiresAt: inMs(4 * 3600 * 1000) });
+await no('presence entry gender mismatch denied', gm.commit());
+// Anyone may LIST entries to count — but they carry no userId, so no enumeration.
+await ok('list presence entries by venue (aggregate only)', getDocs(query(collection(B, 'venue_presence_entries'), where('venueId', '==', 'vP'))));
+// Only the coupled owner may delete an entry.
+await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));
+await ok('owner deletes own presence entry', deleteDoc(doc(A, 'venue_presence_entries/ENT1')));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

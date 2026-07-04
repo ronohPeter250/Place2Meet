@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, Modal, ScrollView, StyleSheet, TouchableOpacity,
 } from 'react-native';
@@ -9,6 +9,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Button } from './Button';
 import { GenderMaleSmallIcon, GenderFemaleSmallIcon, GenderOtherSmallIcon } from './SvgIcons';
 import { Venue } from '../../services/venues';
+import { getVenueActiveCounts } from '../../services/checkin';
 import { darkMapStyle } from '../../constants/mapStyle';
 import { colors, typography, borderRadius } from '../../theme';
 import { he } from '../../i18n/he';
@@ -31,20 +32,38 @@ export const VenuePopup = React.memo(function VenuePopup({
   onCheckIn,
 }: VenuePopupProps) {
   const insets = useSafeAreaInsets();
+  const [liveCounts, setLiveCounts] = useState<{ male: number; female: number; other: number } | null>(null);
 
-  const handleCheckIn = useCallback(() => {
+  // Live per-gender counts from the identity-free presence entries — this reveals
+  // only aggregate numbers, never who is present.
+  useEffect(() => {
+    if (!venue?.id || !visible) { setLiveCounts(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const c = await getVenueActiveCounts(venue.id);
+        if (!cancelled) setLiveCounts(c);
+      } catch (err) {
+        console.error('[VenuePopup] active counts failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [venue?.id, visible]);
+
+  const handleCheckIn = useCallback(async () => {
     if (!venue) return;
     onCheckIn(venue.id);
+    try {
+      const c = await getVenueActiveCounts(venue.id);
+      setLiveCounts(c);
+    } catch (err) {
+      console.error('[VenuePopup] refresh counts failed:', err);
+    }
   }, [venue, onCheckIn]);
 
   if (!venue) return null;
 
-  // Live per-gender check-in counts are intentionally NOT fetched here: reading
-  // individual checkins would require listing them, which is now restricted to a
-  // user's OWN checkins (so no one can enumerate who is physically where). We show
-  // the venue's stored aggregate; a true live count needs a server-maintained
-  // (Cloud Function) counter.
-  const counts = venue.activeUserCounts ?? { male: 0, female: 0, other: 0 };
+  const counts = liveCounts ?? venue.activeUserCounts ?? { male: 0, female: 0, other: 0 };
   const totalActive = counts.male + counts.female + counts.other;
 
   return (

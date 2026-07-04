@@ -200,6 +200,27 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
     }
 
+    // Identity-free presence tally. Each doc is { venueId, gender, expiresAt } with
+    // NO userId, so any active user may LIST them to count per-gender presence at a
+    // venue — but cannot learn WHO is there. Integrity is enforced by coupling each
+    // entry to the caller's own check-in (checkins/{uid}_{venueId}) that references
+    // it: an entry can only be created/deleted alongside that check-in.
+    match /venue_presence_entries/{entryId} {
+      allow read: if isActiveActor();
+      allow create: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
+        && request.resource.data.gender in ['male', 'female', 'other']
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(5, 'h')
+        && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + request.resource.data.venueId)).data.entryId == entryId
+        && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + request.resource.data.venueId)).data.gender == request.resource.data.gender;
+      allow update: if false;
+      allow delete: if request.auth != null
+        && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId;
+    }
+
     match /swipes/{swipeId} {
       allow get: if isActiveActor()
         && (resource == null
