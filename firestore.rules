@@ -307,8 +307,10 @@ service cloud.firestore {
     }
 
     match /matches/{matchId} {
+      // resource == null guard for parity with the other read rules (a read of a
+      // non-existent match returns not-found instead of erroring on resource.data).
       allow read: if isActiveActor()
-        && request.auth.uid in resource.data.users;
+        && (resource == null || request.auth.uid in resource.data.users);
       allow create: if false;
       allow update, delete: if false;
     }
