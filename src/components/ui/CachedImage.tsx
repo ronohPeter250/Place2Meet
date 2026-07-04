@@ -48,5 +48,7 @@ export function CachedImage({
 // cards, the match photos, the map logos before the view-shot capture mounts).
 export function prefetchImages(uris: (string | undefined | null)[]): void {
   const list = uris.filter((u): u is string => !!u);
-  if (list.length > 0) void Image.prefetch(list);
+  // Fire-and-forget, but swallow rejections so a failed prefetch never surfaces
+  // as an unhandled promise rejection.
+  if (list.length > 0) Image.prefetch(list).catch(() => {});
 }

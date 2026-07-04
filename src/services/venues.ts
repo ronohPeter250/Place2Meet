@@ -114,7 +114,8 @@ export async function getBusinessesAsVenues(maxResults = 200): Promise<Venue[]> 
       return {
         id: d.id,
         name: (data.businessName as string) ?? '',
-        logo: photos[0] ?? '',
+        // Prefer the business's dedicated logo; fall back to the first photo.
+        logo: (data.logo as string) || photos[0] || '',
         photos,
         description: (data.about as string) ?? '',
         address: (data.location as string) ?? '',

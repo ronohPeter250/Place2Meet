@@ -32,8 +32,10 @@ export default function NameScreen() {
       router.push('/(onboarding)/city');
     } catch (err: unknown) {
       const code = (err as { code?: string }).code;
-      if (code === 'already-exists' || code === 'permission-denied') {
-        // Profile already exists (merge:true should handle this), continue
+      // Only a harmless already-exists should advance; a real permission-denied
+      // means the profile was NOT saved, so keep the user here to retry rather
+      // than stranding them mid-onboarding.
+      if (code === 'already-exists') {
         router.push('/(onboarding)/city');
       } else {
         Alert.alert('שגיאה', 'אירעה שגיאה בשמירת הפרופיל. נסה שוב.');

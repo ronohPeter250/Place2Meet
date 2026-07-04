@@ -54,9 +54,13 @@ export default function ChatListScreen() {
             })))
           );
           if (cancelled) return;
-          results.forEach((r, i) => {
-            const entry = r.status === 'fulfilled' ? r.value : { uid: uncachedUids[i], name: 'Unknown', photo: undefined };
-            nameCache.current.set(entry.uid, { name: entry.name, photo: entry.photo });
+          results.forEach((r) => {
+            // Only cache successful reads — a transient/denied read stays uncached
+            // so the next snapshot retries it (render falls back to 'Unknown'
+            // meanwhile) instead of sticking 'Unknown' for the whole session.
+            if (r.status === 'fulfilled') {
+              nameCache.current.set(r.value.uid, { name: r.value.name, photo: r.value.photo });
+            }
           });
         }
 

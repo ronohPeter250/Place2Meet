@@ -79,9 +79,12 @@ export default function EventsScreen() {
       setRegisteredIds(prev => new Set(prev).add(selectedEvent.id));
       Alert.alert('נרשמת בהצלחה!', 'ההרשמה לאירוע אושרה.');
       setShowConfirm(false);
-      // Refresh events so the attendee count reflects the new registration.
-      const data = await getEvents();
-      setEvents(data);
+      // Refresh events so the count reflects the new registration — but a failed
+      // REFRESH must not surface as a registration error (the register succeeded).
+      try {
+        const data = await getEvents();
+        setEvents(data);
+      } catch { /* count refresh is best-effort */ }
     } catch (err: unknown) {
       const message = (err as Error).message;
       if (message === 'Event is full') {

@@ -55,7 +55,9 @@ export async function getEvents(maxResults = 50): Promise<AppEvent[]> {
     eventsRef,
     where('dateTime', '>=', Timestamp.now()),
     orderBy('dateTime', 'asc'),
-    firestoreLimit(maxResults)
+    // Over-fetch so the post-query suspended-business filter below doesn't leave
+    // fewer than maxResults; we slice back to maxResults after filtering.
+    firestoreLimit(maxResults * 2)
   );
   const snapshot = await getDocs(q);
   const events = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as AppEvent[];
@@ -73,7 +75,7 @@ export async function getEvents(maxResults = 50): Promise<AppEvent[]> {
       activeVenues.add(d.id);
     }
   }
-  return events.filter(e => activeVenues.has(e.venueId));
+  return events.filter(e => activeVenues.has(e.venueId)).slice(0, maxResults);
 }
 
 export async function getEventsByCreator(creatorUid: string): Promise<AppEvent[]> {
