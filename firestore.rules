@@ -156,17 +156,28 @@ service cloud.firestore {
     }
 
     match /businesses/{businessId} {
+      // The business doc is world-readable (map/directory), so owner contact PII
+      // (contactName/email) must NOT live here — it goes in the private subdoc
+      // below. The owner-write branches forbid those keys on the public doc.
       allow read: if isAdmin() || (request.auth != null && (request.auth.uid == businessId || isActiveActor()));
       allow create: if isAdmin()
         || (request.auth != null
           && request.auth.uid == businessId
-          && !request.resource.data.keys().hasAny(businessAdminFields()));
+          && !request.resource.data.keys().hasAny(businessAdminFields())
+          && !request.resource.data.keys().hasAny(['contactName', 'email']));
       allow update: if isAdmin()
         || (request.auth != null
           && request.auth.uid == businessId
           && isActiveBusiness(businessId)
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(businessAdminFields()));
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(businessAdminFields())
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['contactName', 'email']));
       allow delete: if false;
+
+      // Owner contact PII — readable/writable only by the owner or an admin.
+      match /private/{docId} {
+        allow read, write: if isAdmin()
+          || (request.auth != null && request.auth.uid == businessId);
+      }
     }
 
     match /venues/{venueId} {

@@ -94,15 +94,27 @@ export async function listBusinessesForAdmin(
     ? [orderBy(documentId()), startAfter(cursor), limit(pageSize)]
     : [orderBy(documentId()), limit(pageSize)];
   const snap = await getDocs(query(collection(db, 'businesses'), ...constraints));
+  const items = await Promise.all(snap.docs.map(async d => {
+    // Merge the private contact subdoc (admin-readable) so the admin list can
+    // still show contactName/email even though they're off the public doc.
+    const priv = await getDoc(doc(db, 'businesses', d.id, 'private', 'contact')).catch(() => null);
+    const p = priv && priv.exists() ? priv.data() : {};
+    return { uid: d.id, ...d.data(), ...p } as BusinessProfile;
+  }));
   return {
-    items: snap.docs.map(d => ({ uid: d.id, ...d.data() })) as BusinessProfile[],
+    items: items as BusinessProfile[],
     nextCursor: snap.docs.length === pageSize ? snap.docs[snap.docs.length - 1] : null,
   };
 }
 
 export async function getBusinessForAdmin(uid: string): Promise<BusinessProfile | null> {
-  const snap = await getDoc(doc(db, 'businesses', uid));
-  return snap.exists() ? ({ uid: snap.id, ...snap.data() } as BusinessProfile) : null;
+  const [snap, priv] = await Promise.all([
+    getDoc(doc(db, 'businesses', uid)),
+    getDoc(doc(db, 'businesses', uid, 'private', 'contact')).catch(() => null),
+  ]);
+  if (!snap.exists()) return null;
+  const p = priv && priv.exists() ? priv.data() : {};
+  return { uid: snap.id, ...snap.data(), ...p } as BusinessProfile;
 }
 
 function currentAdminIdentity() {
@@ -194,9 +206,7 @@ export async function saveBusinessForAdmin(input: AdminBusinessInput): Promise<s
   const before = await getDoc(ref);
   const data = {
     uid: id,
-    contactName: input.contactName.trim(),
     businessName: input.businessName.trim(),
-    email: input.email.trim(),
     location: input.location,
     coordinates: input.coordinates,
     about: input.about.trim(),
@@ -211,6 +221,11 @@ export async function saveBusinessForAdmin(input: AdminBusinessInput): Promise<s
   };
   const batch = writeBatch(db);
   batch.set(ref, data, { merge: true });
+  // Contact PII stays in the private subdoc, off the world-readable business doc.
+  batch.set(doc(db, 'businesses', id, 'private', 'contact'), {
+    contactName: input.contactName.trim(),
+    email: input.email.trim(),
+  }, { merge: true });
   batch.set(doc(collection(db, 'adminAuditLogs')), {
     ...admin,
     targetType: 'business',

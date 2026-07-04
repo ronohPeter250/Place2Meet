@@ -177,6 +177,12 @@ await no('cannot downgrade profileComplete true->false (monotonic)', updateDoc(d
 await no('re-join event with spoofed genderField denied', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'female' }));
 await ok('re-join event with real genderField allowed', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'male' }));
 
+console.log('\n[business PII — contact in private subdoc]');
+await no('business cannot put contactName on public doc', updateDoc(doc(BIZ, 'businesses/BIZ'), { contactName: 'X' }));
+await ok('owner writes contact PII to private subdoc', setDoc(doc(BIZ, 'businesses/BIZ/private/contact'), { contactName: 'Biz Owner', email: 'owner@biz.com' }));
+await ok('owner reads own contact PII', getDoc(doc(BIZ, 'businesses/BIZ/private/contact')));
+await no('other user cannot read business contact PII', getDoc(doc(C, 'businesses/BIZ/private/contact')));
+
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes
 try {

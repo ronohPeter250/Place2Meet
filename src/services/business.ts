@@ -1,9 +1,10 @@
 import {
   doc,
-  setDoc,
   updateDoc,
   getDoc,
   serverTimestamp,
+  writeBatch,
+  WriteBatch,
   FieldValue,
   Timestamp,
   GeoPoint,
@@ -63,16 +64,25 @@ function assertAuthenticatedUser(uid: string): void {
   }
 }
 
+// Contact PII (contactName/email) lives in businesses/{uid}/private/contact,
+// readable only by the owner/admin — never on the world-readable business doc.
+function stageContactPII(batch: WriteBatch, uid: string, contactName?: string, email?: string): void {
+  const priv: Record<string, string> = {};
+  if (contactName !== undefined) priv.contactName = sanitizeText(contactName, MAX_NAME_LENGTH);
+  if (email !== undefined) priv.email = email;
+  if (Object.keys(priv).length > 0) {
+    batch.set(doc(db, 'businesses', uid, 'private', 'contact'), priv, { merge: true });
+  }
+}
+
 export async function createBusinessProfile(
   uid: string,
   data: Partial<BusinessProfile>
 ): Promise<void> {
   assertAuthenticatedUser(uid);
 
-  const sanitizedData: Partial<BusinessProfile> = { ...data };
-  if (sanitizedData.contactName) {
-    sanitizedData.contactName = sanitizeText(sanitizedData.contactName, MAX_NAME_LENGTH);
-  }
+  const { contactName, email, ...rest } = data;
+  const sanitizedData: Partial<BusinessProfile> = { ...rest };
   if (sanitizedData.businessName) {
     sanitizedData.businessName = sanitizeText(sanitizedData.businessName, MAX_NAME_LENGTH);
   }
@@ -85,17 +95,20 @@ export async function createBusinessProfile(
   // creation time. Those fields are stamped only on first creation.
   const ref = doc(db, 'businesses', uid);
   const existing = await getDoc(ref);
+  const batch = writeBatch(db);
   if (existing.exists()) {
-    await setDoc(ref, { ...sanitizedData, uid, lastActive: serverTimestamp() }, { merge: true });
-    return;
+    batch.set(ref, { ...sanitizedData, uid, lastActive: serverTimestamp() }, { merge: true });
+  } else {
+    batch.set(ref, {
+      ...sanitizedData,
+      uid,
+      profileComplete: false,
+      createdAt: serverTimestamp(),
+      lastActive: serverTimestamp(),
+    }, { merge: true });
   }
-  await setDoc(ref, {
-    ...sanitizedData,
-    uid,
-    profileComplete: false,
-    createdAt: serverTimestamp(),
-    lastActive: serverTimestamp(),
-  }, { merge: true });
+  stageContactPII(batch, uid, contactName, email);
+  await batch.commit();
 }
 
 export async function updateBusinessProfile(
@@ -104,10 +117,8 @@ export async function updateBusinessProfile(
 ): Promise<void> {
   assertAuthenticatedUser(uid);
 
-  const sanitizedData: Partial<BusinessProfile> = { ...data };
-  if (sanitizedData.contactName) {
-    sanitizedData.contactName = sanitizeText(sanitizedData.contactName, MAX_NAME_LENGTH);
-  }
+  const { contactName, email, ...rest } = data;
+  const sanitizedData: Partial<BusinessProfile> = { ...rest };
   if (sanitizedData.businessName) {
     sanitizedData.businessName = sanitizeText(sanitizedData.businessName, MAX_NAME_LENGTH);
   }
@@ -115,10 +126,13 @@ export async function updateBusinessProfile(
     sanitizedData.about = sanitizeText(sanitizedData.about, MAX_ABOUT_LENGTH);
   }
 
-  await updateDoc(doc(db, 'businesses', uid), {
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'businesses', uid), {
     ...sanitizedData,
     lastActive: serverTimestamp(),
   });
+  stageContactPII(batch, uid, contactName, email);
+  await batch.commit();
 }
 
 export async function completeBusinessProfile(uid: string): Promise<void> {
@@ -130,9 +144,13 @@ export async function completeBusinessProfile(uid: string): Promise<void> {
 }
 
 export async function getBusinessProfile(uid: string): Promise<BusinessProfile | null> {
-  const bizDoc = await getDoc(doc(db, 'businesses', uid));
-  if (bizDoc.exists()) {
-    return bizDoc.data() as BusinessProfile;
-  }
-  return null;
+  const [bizDoc, privDoc] = await Promise.all([
+    getDoc(doc(db, 'businesses', uid)),
+    // Contact PII is in a private subdoc — readable only by the owner/admin, so
+    // this resolves for the account's own screens and is skipped otherwise.
+    getDoc(doc(db, 'businesses', uid, 'private', 'contact')).catch(() => null),
+  ]);
+  if (!bizDoc.exists()) return null;
+  const priv = privDoc && privDoc.exists() ? privDoc.data() : {};
+  return { ...bizDoc.data(), ...priv } as BusinessProfile;
 }
