@@ -103,6 +103,8 @@ service cloud.firestore {
         && resource.data.get('attendeeIds', []).hasAll(request.resource.data.get('attendeeIds', []))
         && request.resource.data.get('attendeeCount', 0) == resource.data.get('attendeeCount', 0) - 1
         && request.resource.data.get('attendeeCounts', {}).get(gender, 0) == resource.data.get('attendeeCounts', {}).get(gender, 0) - 1
+        // Defense-in-depth: a per-gender bucket can never be driven below zero.
+        && request.resource.data.get('attendeeCounts', {}).get(gender, 0) >= 0
         && otherAttendeeCountsUnchanged(gender);
     }
 
@@ -438,16 +440,18 @@ service cloud.firestore {
         // Can't register for an event whose owning business is suspended/blocked —
         // a moderated-off business must not keep collecting registrations.
         && isActiveBusiness(get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.venueId);
-      // eventId is immutable, and genderField must ALWAYS equal the real (frozen)
-      // profile gender — including on a cancelled->registered re-join, so it can't
-      // be re-pinned to a fake gender to spoof the event's per-gender tally. Since
-      // gender is frozen post-completion, this never blocks a legit re-join.
+      // eventId is immutable, and genderField is IMMUTABLE (must equal its own prior
+      // value) — it's the bucket a user was counted under at join, so it must never
+      // change, or a leave would decrement a different bucket than the join
+      // incremented (driving a per-gender count negative). Freezing it here — rather
+      // than re-pinning to profileGender() — also closes the pre-completion window
+      // where gender is still mutable and could be flipped then re-pinned.
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && resource.data.userId == request.auth.uid
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.eventId == resource.data.eventId
-        && request.resource.data.get('genderField', '') == profileGender()
+        && request.resource.data.get('genderField', '') == resource.data.get('genderField', '')
         // A cancelled->registered RE-JOIN must also respect business moderation
         // (a plain set() on an existing reg is an UPDATE, so the create-time gate
         // was bypassable). Leaving (status != 'registered') stays allowed.

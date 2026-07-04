@@ -184,6 +184,9 @@ console.log('\n[R5 fixes — profileComplete monotonic / genderField pinned on r
 await no('cannot downgrade profileComplete true->false (monotonic)', updateDoc(doc(D, 'users/D'), { profileComplete: false }));
 await no('re-join event with spoofed genderField denied', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'female' }));
 await ok('re-join event with real genderField allowed', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'male' }));
+// R19 desync fix: genderField is immutable vs its STORED value (not just profileGender),
+// so it can never be re-pinned to a different bucket than the one the join counted.
+await no('re-pin genderField to a third bucket denied (desync fix)', updateDoc(doc(A, 'registrations/A_E3'), { status: 'registered', genderField: 'other' }));
 
 console.log('\n[business PII — contact in private subdoc]');
 await no('business cannot put contactName on public doc', updateDoc(doc(BIZ, 'businesses/BIZ'), { contactName: 'X' }));

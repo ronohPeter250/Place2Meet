@@ -369,7 +369,10 @@ export async function getPlatformOverviewForAdmin(): Promise<AdminPlatformOvervi
   const totalGender = male + female + other;
   const maleP = totalGender > 0 ? Math.round((male / totalGender) * 100) : 0;
   const femaleP = totalGender > 0 ? Math.round((female / totalGender) * 100) : 0;
-  const otherP = totalGender > 0 ? 100 - maleP - femaleP : 0;
+  // Clamp: independent rounding of maleP/femaleP can sum to 101, which would
+  // otherwise make otherP -1 (rendered as "-1%" / a negative donut arc). Mirrors
+  // the same guard in src/services/dashboard.ts.
+  const otherP = totalGender > 0 ? Math.max(0, 100 - maleP - femaleP) : 0;
 
   // --- Events analysis ---
   const now = new Date();
