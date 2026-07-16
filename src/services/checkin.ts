@@ -24,8 +24,42 @@ export interface CheckIn {
 const CHECKIN_DURATION_HOURS = 4;
 type Gender = 'male' | 'female' | 'other';
 
+// A user may only mark presence when they are physically AT the venue. Their live
+// GPS is checked against the venue's coordinates both here (honest-path UX) and in
+// the Firestore rules (the real backstop against a raw client). ~200m covers
+// typical GPS inaccuracy without letting someone check in from down the street.
+const CHECKIN_RADIUS_METERS = 200;
+
 function normalizeGender(g: unknown): Gender {
   return g === 'male' || g === 'female' ? g : 'other';
+}
+
+function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+// The venue's authoritative coordinates: a venue doc's `location` GeoPoint, or a
+// business doc's `coordinates` GeoPoint. Returns null if neither has coordinates.
+async function getVenueGeo(venueId: string): Promise<{ lat: number; lng: number } | null> {
+  const venueSnap = await getDoc(doc(db, 'venues', venueId));
+  const loc = (venueSnap.data() as { location?: { latitude: number; longitude: number } } | undefined)?.location;
+  if (loc && typeof loc.latitude === 'number') return { lat: loc.latitude, lng: loc.longitude };
+  const bizSnap = await getDoc(doc(db, 'businesses', venueId));
+  const coords = (bizSnap.data() as { coordinates?: { latitude: number; longitude: number } } | undefined)?.coordinates;
+  if (coords && typeof coords.latitude === 'number') return { lat: coords.latitude, lng: coords.longitude };
+  return null;
+}
+
+export class CheckInError extends Error {
+  constructor(public reason: 'LOCATION_REQUIRED' | 'VENUE_NO_LOCATION' | 'TOO_FAR') {
+    super(reason);
+    this.name = 'CheckInError';
+  }
 }
 
 // A check-in writes two docs:
@@ -36,9 +70,24 @@ function normalizeGender(g: unknown): Gender {
 //    per-gender presence per venue WITHOUT being able to enumerate who is where.
 // The two are coupled by the rules: an entry can only be created/deleted by the
 // owner of the matching check-in that references it.
-export async function checkInToVenue(venueId: string): Promise<void> {
+export async function checkInToVenue(
+  venueId: string,
+  userCoords: { lat: number; lng: number },
+): Promise<void> {
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error('Unauthorized');
+
+  if (!userCoords || typeof userCoords.lat !== 'number' || typeof userCoords.lng !== 'number'
+      || Number.isNaN(userCoords.lat) || Number.isNaN(userCoords.lng)) {
+    throw new CheckInError('LOCATION_REQUIRED');
+  }
+  // Proximity gate: only allow if the user's live GPS is within the radius of the
+  // venue. The Firestore rules enforce a matching bounding box as the real backstop.
+  const venueGeo = await getVenueGeo(venueId);
+  if (!venueGeo) throw new CheckInError('VENUE_NO_LOCATION');
+  if (distanceMeters(userCoords.lat, userCoords.lng, venueGeo.lat, venueGeo.lng) > CHECKIN_RADIUS_METERS) {
+    throw new CheckInError('TOO_FAR');
+  }
 
   const userSnap = await getDoc(doc(db, 'users', uid));
   const gender = normalizeGender((userSnap.data() as { gender?: string } | undefined)?.gender);
@@ -91,6 +140,8 @@ export async function checkInToVenue(venueId: string): Promise<void> {
       userId: uid,
       venueId,
       gender,
+      lat: userCoords.lat,
+      lng: userCoords.lng,
       timestamp: serverTimestamp(),
       expiresAt,
       entryId: entryRef.id,

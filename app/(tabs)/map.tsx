@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { captureRef } from 'react-native-view-shot';
+import * as Location from 'expo-location';
 import { debugLog } from '../../src/utils/debugLog';
 let MapView: any;
 let Marker: any;
@@ -358,9 +359,32 @@ export default function MapScreen() {
     // over-counting the venue until they expire.
     if (checkInFlightRef.current) return;
     checkInFlightRef.current = true;
-    try { await checkInToVenue(venueId); Alert.alert('נרשמת בהצלחה!', 'אתה רשום כנוכח במקום.'); setShowVenuePopup(false); }
-    catch { Alert.alert('שגיאה', 'לא ניתן להירשם כרגע. נסה שוב.'); }
-    finally { checkInFlightRef.current = false; }
+    try {
+      // Presence requires a FRESH GPS fix at check-in time — NOT the map's cached/
+      // default coordinates (useLocation seeds Tel Aviv before the first real fix,
+      // which would let someone check in near a TLV venue prematurely). You can
+      // only mark presence when you are physically at the venue.
+      const perm = await Location.getForegroundPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('נדרש מיקום', 'כדי לסמן נוכחות יש לאפשר גישה למיקום ולהיות פיזית במקום.');
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      await checkInToVenue(venueId, { lat: pos.coords.latitude, lng: pos.coords.longitude });
+      Alert.alert('נרשמת בהצלחה!', 'אתה רשום כנוכח במקום.');
+      setShowVenuePopup(false);
+    } catch (e) {
+      const reason = (e as { reason?: string })?.reason;
+      if (reason === 'TOO_FAR') {
+        Alert.alert('רחוק מדי מהמקום', 'אפשר לסמן נוכחות רק כאשר אתה נמצא פיזית במקום.');
+      } else if (reason === 'LOCATION_REQUIRED' || reason === 'VENUE_NO_LOCATION') {
+        Alert.alert('נדרש מיקום', 'לא הצלחנו לאמת את המיקום שלך. ודא שהמיקום פעיל ונסה שוב מהמקום.');
+      } else {
+        Alert.alert('שגיאה', 'לא ניתן להירשם כרגע. נסה שוב.');
+      }
+    } finally {
+      checkInFlightRef.current = false;
+    }
   }, []);
   const handleFilterApply = useCallback((f: FilterValues) => { setFilters(f); setShowFilter(false); }, []);
   const handleFilterClose = useCallback(() => setShowFilter(false), []);

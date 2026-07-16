@@ -26,7 +26,7 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'users/D'), { name: 'D', gender: 'male', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
   await setDoc(doc(db, 'users/E'), { name: 'E', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
   // Business + events for the join/leave-coupling tests.
-  await setDoc(doc(db, 'businesses/BIZ'), { name: 'Biz' });
+  await setDoc(doc(db, 'businesses/BIZ'), { name: 'Biz', coordinates: new GeoPoint(32.08, 34.78) });
   await setDoc(doc(db, 'events/E1'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 } });
   await setDoc(doc(db, 'events/E2'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 1, attendeeCount: 1, attendeeIds: ['X'], attendeeCounts: { male: 1, female: 0, other: 0 } });
   await setDoc(doc(db, 'events/E9'), { createdBy: 'BIZ', venueId: 'BIZ', capacity: 5, attendeeCount: 0, attendeeIds: [], attendeeCounts: { male: 0, female: 0, other: 0 }, dateTime: Timestamp.fromDate(new Date(Date.now() + 86400000)) });
@@ -44,7 +44,7 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'venue_presence_entries/VICT'), { venueId: 'vX', gender: 'female', expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
   // Venues that the check-in tests target (check-in now requires the venue to exist).
   for (const v of ['v1', 'v2', 'v3', 'v4', 'v9', 'vP', 'vR', 'vX']) {
-    await setDoc(doc(db, 'venues/' + v), { name: v });
+    await setDoc(doc(db, 'venues/' + v), { name: v, location: new GeoPoint(32.08, 34.78) });
   }
   // G = incomplete profile with no gender yet (to verify onboarding can still set it).
   await setDoc(doc(db, 'users/G'), { name: 'G', profileComplete: false });
@@ -94,18 +94,23 @@ await no('A cannot write B location', setDoc(doc(A, 'user_locations/B'), { locat
 
 console.log('\n[checkins — expiresAt validation]');
 const inMs = (ms) => Timestamp.fromDate(new Date(Date.now() + ms));
-await ok('valid checkin (now+4h)', setDoc(doc(A, 'checkins/A_v1'), { userId:'A', venueId:'v1', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ci1' }));
-await no('far-future expiresAt denied', setDoc(doc(A, 'checkins/A_v2'), { userId:'A', venueId:'v2', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(100*3600*1000), entryId:'ci2' }));
-await no('past expiresAt denied', setDoc(doc(A, 'checkins/A_v3'), { userId:'A', venueId:'v3', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(-3600*1000), entryId:'ci3' }));
-await no('checkin gender != profile denied (gender spoof)', setDoc(doc(A, 'checkins/A_v4'), { userId:'A', venueId:'v4', gender:'female', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ci4' }));
-await no('checkin pointing at an existing (victim) entry denied', setDoc(doc(A, 'checkins/A_vX'), { userId:'A', venueId:'vX', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'VICT' }));
+const AT = { lat: 32.08, lng: 34.78 };  // at the seeded venue location
+await ok('valid checkin (now+4h, at venue)', setDoc(doc(A, 'checkins/A_v1'), { userId:'A', venueId:'v1', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ci1' }));
+await no('far-future expiresAt denied', setDoc(doc(A, 'checkins/A_v2'), { userId:'A', venueId:'v2', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(100*3600*1000), entryId:'ci2' }));
+await no('past expiresAt denied', setDoc(doc(A, 'checkins/A_v3'), { userId:'A', venueId:'v3', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(-3600*1000), entryId:'ci3' }));
+await no('checkin gender != profile denied (gender spoof)', setDoc(doc(A, 'checkins/A_v4'), { userId:'A', venueId:'v4', gender:'female', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ci4' }));
+await no('checkin pointing at an existing (victim) entry denied', setDoc(doc(A, 'checkins/A_vX'), { userId:'A', venueId:'vX', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'VICT' }));
+// Proximity gate (new): checking in far from the venue, or with no GPS, is denied.
+await no('checkin too far from venue denied', setDoc(doc(A, 'checkins/A_v9far'), { userId:'A', venueId:'v9', gender:'male', lat: 33.5, lng: 35.5, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cifar' }));
+await no('checkin without lat/lng denied', setDoc(doc(A, 'checkins/A_v9nl'), { userId:'A', venueId:'v9', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cinl' }));
+await ok('checkin at a BUSINESS venue (coordinates) allowed', setDoc(doc(A, 'checkins/A_BIZ'), { userId:'A', venueId:'BIZ', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cibiz' }));
 
 console.log('\n[R1 fixes — swipe id binding / checkins list / profileComplete / reads+metadata]');
 await no('forge reverse swipe (id B_A, fromUser A) denied', setDoc(doc(A, 'swipes/B_A'), { fromUser: 'A', toUser: 'B', action: 'like', timestamp: serverTimestamp() }));
 await no('self-swipe denied', setDoc(doc(A, 'swipes/A_A'), { fromUser: 'A', toUser: 'A', action: 'like', timestamp: serverTimestamp() }));
 await ok('A lists OWN checkins', getDocs(query(collection(A, 'checkins'), where('userId', '==', 'A'))));
 await no('venue-scoped checkin list (enumerate presence) denied', getDocs(query(collection(A, 'checkins'), where('venueId', '==', 'v1'))));
-await no('checkin with mismatched doc id denied', setDoc(doc(A, 'checkins/A_WRONG'), { userId: 'A', venueId: 'v9', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ci9' }));
+await no('checkin with mismatched doc id denied', setDoc(doc(A, 'checkins/A_WRONG'), { userId: 'A', venueId: 'v9', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ci9' }));
 await ok('D flips profileComplete=true WITH all fields', updateDoc(doc(D, 'users/D'), { profileComplete: true }));
 await no('E flips profileComplete=true MISSING gender denied', updateDoc(doc(E, 'users/E'), { profileComplete: true }));
 await ok('A stamps OWN reads', updateDoc(doc(A, 'chats/A_B'), { ['reads.A']: serverTimestamp() }));
@@ -154,14 +159,14 @@ await ok('cancel keeps genderField allowed', updateDoc(doc(A, 'registrations/A_E
 console.log('\n[venue_presence_entries — identity-free live counts coupled to check-in]');
 // Legit check-in: private check-in + public entry (referencing it) in one batch.
 const ci = writeBatch(A);
-ci.set(doc(A, 'checkins/A_vP'), { userId: 'A', venueId: 'vP', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT1' });
+ci.set(doc(A, 'checkins/A_vP'), { userId: 'A', venueId: 'vP', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT1' });
 ci.set(doc(A, 'venue_presence_entries/ENT1'), { venueId: 'vP', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) });
 await ok('check-in creates coupled presence entry', ci.commit());
 // Forge a presence entry with no matching check-in.
 await no('presence entry without matching check-in denied', setDoc(doc(A, 'venue_presence_entries/FORGE'), { venueId: 'vQ', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
 // Gender must match the check-in it is coupled to.
 const gm = writeBatch(A);
-gm.set(doc(A, 'checkins/A_vR'), { userId: 'A', venueId: 'vR', gender: 'male', timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT2' });
+gm.set(doc(A, 'checkins/A_vR'), { userId: 'A', venueId: 'vR', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT2' });
 gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female', expiresAt: inMs(4 * 3600 * 1000) });
 await no('presence entry gender mismatch denied', gm.commit());
 // Anyone may LIST entries to count — but they carry no userId, so no enumeration.
