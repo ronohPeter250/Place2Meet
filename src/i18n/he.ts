@@ -199,7 +199,7 @@ export const he = {
     },
     email: {
       title: 'מה האימייל שלך?',
-      subtitle: 'נשלח חשבוניות',
+      subtitle: '',
       placeholder: 'example@email.com',
     },
     location: {

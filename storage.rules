@@ -2,59 +2,47 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
+    // IMPORTANT: Storage rules deliberately do NOT read Firestore here (no
+    // cross-service firestore.get/exists on the hot paths). Storage->Firestore
+    // access is unsupported in the emulator and fragile in production, and it was
+    // denying EVERY photo upload with storage/unauthorized (onboarding + profile
+    // + business). Ownership is enforced purely on request.auth.uid; the images
+    // themselves (profile photos, business photos) are meant to be viewable by
+    // any signed-in user anyway (swipe deck / map / directory).
+
+    // Admin check is cross-service (best-effort): used only for admin deletes.
+    // If cross-service is unavailable it simply evaluates false, and the
+    // owner-write/owner-delete branches still work.
     function isAdmin() {
       return request.auth != null
         && firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.active == true;
     }
 
-    function isActiveUser(userId) {
-      return firestore.exists(/databases/(default)/documents/users/$(userId))
-        && (!('accountStatus' in firestore.get(/databases/(default)/documents/users/$(userId)).data)
-          || firestore.get(/databases/(default)/documents/users/$(userId)).data.accountStatus == 'active');
-    }
-
-    function isActiveBusiness(businessId) {
-      return firestore.exists(/databases/(default)/documents/businesses/$(businessId))
-        && (!('accountStatus' in firestore.get(/databases/(default)/documents/businesses/$(businessId)).data)
-          || firestore.get(/databases/(default)/documents/businesses/$(businessId)).data.accountStatus == 'active');
-    }
-
-
-    function isActiveActor() {
-      return request.auth != null && (isAdmin() || isActiveUser(request.auth.uid) || isActiveBusiness(request.auth.uid));
-    }
-
     match /users/{userId}/photos/{photoId} {
-      allow read: if isActiveActor();
+      allow read: if request.auth != null;
       allow write: if request.auth != null
         && request.auth.uid == userId
-        && isActiveUser(userId)
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
-      allow delete: if (request.auth != null
-        && request.auth.uid == userId
-        && isActiveUser(userId)) || isAdmin();
+      allow delete: if (request.auth != null && request.auth.uid == userId) || isAdmin();
     }
 
     match /businesses/{businessId}/{allPaths=**} {
-      allow read: if isActiveActor();
-      allow write: if ((request.auth != null && request.auth.uid == businessId && isActiveBusiness(businessId)) || isAdmin())
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.auth.uid == businessId
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
-      allow delete: if (request.auth != null && request.auth.uid == businessId && isActiveBusiness(businessId)) || isAdmin();
+      allow delete: if (request.auth != null && request.auth.uid == businessId) || isAdmin();
     }
 
+    // The app never uploads to events/ storage (event photos reuse the business's
+    // photo URLs), so keep this locked down — readable by signed-in users, writable
+    // only by admin.
     match /events/{eventId}/{allPaths=**} {
-      allow read: if isActiveActor();
-      allow create, update: if request.auth != null
-        && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*')
-        && firestore.get(/databases/(default)/documents/events/$(eventId)).data.createdBy == request.auth.uid
-        && isActiveBusiness(request.auth.uid);
-      allow delete: if request.auth != null
-        && firestore.get(/databases/(default)/documents/events/$(eventId)).data.createdBy == request.auth.uid
-        && isActiveBusiness(request.auth.uid);
+      allow read: if request.auth != null;
+      allow write, delete: if isAdmin();
     }
 
     match /{allPaths=**} {

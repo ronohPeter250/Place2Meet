@@ -1,4 +1,4 @@
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
@@ -50,12 +50,24 @@ async function resolveResult(result: ImagePicker.ImagePickerResult): Promise<str
  * (a Hebrew Alert is shown on denial).
  */
 export async function pickFromGallery(): Promise<string | null> {
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
+  // Android: the system photo picker needs NO runtime permission, and gating on
+  // requestMediaLibraryPermissionsAsync actively BREAKS the gallery on Android 13+
+  // (READ_MEDIA_IMAGES isn't a grantable legacy permission there, so the request
+  // returns denied and the picker never opens). Only iOS needs the permission.
+  if (Platform.OS === 'ios') {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
+      return null;
+    }
+  }
+  try {
+    return resolveResult(await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS));
+  } catch (e) {
+    console.error('[imagePick] gallery launch failed:', e);
+    Alert.alert('שגיאה', 'לא ניתן לפתוח את הגלריה. נסה שוב.');
     return null;
   }
-  return resolveResult(await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS));
 }
 
 /**
@@ -69,12 +81,18 @@ export async function captureFromCamera(facing: 'back' | 'front' = 'back'): Prom
     Alert.alert('נדרשת גישה', 'אנא אפשר גישה למצלמה בהגדרות המכשיר');
     return null;
   }
-  return resolveResult(
-    await ImagePicker.launchCameraAsync({
-      ...PICKER_OPTIONS,
-      cameraType: facing === 'front' ? ImagePicker.CameraType.front : ImagePicker.CameraType.back,
-    }),
-  );
+  try {
+    return resolveResult(
+      await ImagePicker.launchCameraAsync({
+        ...PICKER_OPTIONS,
+        cameraType: facing === 'front' ? ImagePicker.CameraType.front : ImagePicker.CameraType.back,
+      }),
+    );
+  } catch (e) {
+    console.error('[imagePick] camera launch failed:', e);
+    Alert.alert('שגיאה', 'לא ניתן לפתוח את המצלמה. נסה שוב.');
+    return null;
+  }
 }
 
 export type PhotoSource = 'camera' | 'selfie' | 'gallery';
@@ -92,18 +110,28 @@ export function pickImageFromSource(source: PhotoSource): Promise<string | null>
  * permission denial (a Hebrew Alert is shown on denial).
  */
 export async function pickMultipleFromGallery(selectionLimit?: number): Promise<string[]> {
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
+  // See pickFromGallery: Android's photo picker needs no permission; gating on it
+  // breaks the gallery on Android 13+. Only iOS requires the permission.
+  if (Platform.OS === 'ios') {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
+      return [];
+    }
+  }
+  try {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      ...PICKER_OPTIONS,
+      allowsMultipleSelection: true,
+      ...(selectionLimit && selectionLimit > 0 ? { selectionLimit } : {}),
+    });
+    if (result.canceled) return [];
+    return Promise.all(result.assets.map(asset => downscale(asset)));
+  } catch (e) {
+    console.error('[imagePick] gallery (multi) launch failed:', e);
+    Alert.alert('שגיאה', 'לא ניתן לפתוח את הגלריה. נסה שוב.');
     return [];
   }
-  const result = await ImagePicker.launchImageLibraryAsync({
-    ...PICKER_OPTIONS,
-    allowsMultipleSelection: true,
-    ...(selectionLimit && selectionLimit > 0 ? { selectionLimit } : {}),
-  });
-  if (result.canceled) return [];
-  return Promise.all(result.assets.map(asset => downscale(asset)));
 }
 
 /**
