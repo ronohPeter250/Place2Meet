@@ -31,6 +31,10 @@ async function step(name, fn) {
   try { await fn(); console.log('  PASS   ', name); pass++; }
   catch (e) { console.log('  FAIL   ', name, '->', e?.code || e?.message || String(e)); fail++; }
 }
+async function denyStep(name, fn) {
+  try { await fn(); console.log('  FAIL   ', name, '-> was ALLOWED (expected denial)'); fail++; }
+  catch { console.log('  PASS   ', name, '(denied)'); pass++; }
+}
 const now = () => Date.now();
 
 const HOURS = { sunday: { open: '09:00', close: '17:00', closed: false }, monday: { open: '09:00', close: '17:00', closed: false }, tuesday: { open: '09:00', close: '17:00', closed: false }, wednesday: { open: '09:00', close: '17:00', closed: false }, thursday: { open: '09:00', close: '17:00', closed: false }, friday: { open: '09:00', close: '14:00', closed: false }, saturday: { open: '00:00', close: '00:00', closed: true } };
@@ -67,6 +71,16 @@ await step('uploadBusinessPhoto (storage)', () => uploadBytes(ref(storage, `busi
 await step('uploadBusinessLogo (storage)', () => uploadBytes(ref(storage, `businesses/${bid}/logo_${now()}.jpg`), jpeg, { contentType: 'image/jpeg' }));
 await step('update photos + logo', () => { const b = writeBatch(db); b.update(doc(db, 'businesses', bid), { photos: ['https://x/1', 'https://x/2'], logo: 'https://x/logo', lastActive: serverTimestamp() }); return b.commit(); });
 await step('completeBusinessProfile (profileComplete=true)', () => updateDoc(doc(db, 'businesses', bid), { profileComplete: true, lastActive: serverTimestamp() }));
+
+// Still signed in as the business (bid) here — cover the storage DENY paths so a
+// future edit that drops ownership / size / contentType caps can't ship silently.
+console.log('\n[STORAGE deny-path coverage]');
+const big = new Uint8Array(11 * 1024 * 1024); // > 10MB cap
+await denyStep('cross-user write denied (biz -> another uid photo path)', () => uploadBytes(ref(storage, `users/${uid}/photos/x_${now()}.jpg`), jpeg, { contentType: 'image/jpeg' }));
+await denyStep('non-image contentType denied', () => uploadBytes(ref(storage, `businesses/${bid}/x_${now()}.txt`), jpeg, { contentType: 'text/plain' }));
+await denyStep('oversized (>10MB) upload denied', () => uploadBytes(ref(storage, `businesses/${bid}/big_${now()}.jpg`), big, { contentType: 'image/jpeg' }));
+await denyStep('write to events/ storage denied (non-admin)', () => uploadBytes(ref(storage, `events/E1/x_${now()}.jpg`), jpeg, { contentType: 'image/jpeg' }));
+await denyStep('write to catch-all path denied', () => uploadBytes(ref(storage, `random/junk_${now()}.jpg`), jpeg, { contentType: 'image/jpeg' }));
 
 console.log(`\nLIVE ONBOARDING RESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

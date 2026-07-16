@@ -369,7 +369,19 @@ export default function MapScreen() {
         Alert.alert('נדרש מיקום', 'כדי לסמן נוכחות יש לאפשר גישה למיקום ולהיות פיזית במקום.');
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      // Fetch the fix with a hard timeout so a hung GPS can never leave check-in
+      // permanently stuck (the in-flight guard would otherwise never clear).
+      let pos: Location.LocationObject;
+      try {
+        pos = await Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<Location.LocationObject>((_, reject) =>
+            setTimeout(() => reject(new Error('GPS_TIMEOUT')), 12000)),
+        ]);
+      } catch {
+        Alert.alert('בעיה במיקום', 'לא הצלחנו לקבל את המיקום שלך. ודא שהמיקום פעיל ונסה שוב מהמקום.');
+        return;
+      }
       await checkInToVenue(venueId, { lat: pos.coords.latitude, lng: pos.coords.longitude });
       Alert.alert('נרשמת בהצלחה!', 'אתה רשום כנוכח במקום.');
       setShowVenuePopup(false);
@@ -378,7 +390,7 @@ export default function MapScreen() {
       if (reason === 'TOO_FAR') {
         Alert.alert('רחוק מדי מהמקום', 'אפשר לסמן נוכחות רק כאשר אתה נמצא פיזית במקום.');
       } else if (reason === 'LOCATION_REQUIRED' || reason === 'VENUE_NO_LOCATION') {
-        Alert.alert('נדרש מיקום', 'לא הצלחנו לאמת את המיקום שלך. ודא שהמיקום פעיל ונסה שוב מהמקום.');
+        Alert.alert('בעיה במיקום', 'לא הצלחנו לאמת את המיקום שלך. ודא שהמיקום פעיל ונסה שוב מהמקום.');
       } else {
         Alert.alert('שגיאה', 'לא ניתן להירשם כרגע. נסה שוב.');
       }
@@ -442,26 +454,31 @@ export default function MapScreen() {
         onRegionChangeComplete={() => debugLog('MAP', 'onRegionChangeComplete')}
       >
         {/* ALWAYS render the user marker so their location can never vanish.
-            Use the captured PNG when ready (keyed by uri so a re-captured png
-            remounts and the native icon actually swaps); until then fall back to
-            a simple avatar dot rendered as a Marker child (tracksViewChanges so
-            it paints). Previously this only rendered when userPng existed, so a
-            failed/slow view-shot capture left the user with no marker at all. */}
-        <Marker
-          key={userPng ? `user_${userPng}` : 'user_fallback'}
-          coordinate={{ latitude, longitude }}
-          anchor={{ x: 0.5, y: 0.5 }}
-          zIndex={1000}
-          {...(userPng
-            ? { image: { uri: userPng }, tracksViewChanges: false }
-            : { tracksViewChanges: true })}
-        >
-          {!userPng && (
-            <View style={styles.userFallbackMarker}>
-              <View style={styles.userFallbackDot} />
-            </View>
-          )}
-        </Marker>
+            When the styled view-shot PNG is ready, use it (keyed by uri so a
+            re-captured png remounts and the native icon actually swaps). Until
+            then — or if the capture never succeeds — fall back to the NATIVE
+            default pin (pinColor). We deliberately do NOT use a custom child-View
+            marker here: this file documents that child-View / in-place icon
+            markers are unreliable on New-Arch Android (the whole reason markers
+            are pre-rendered to PNGs), so a View fallback could itself not paint.
+            The native pin always renders. */}
+        {userPng ? (
+          <Marker
+            key={`user_${userPng}`}
+            coordinate={{ latitude, longitude }}
+            anchor={{ x: 0.5, y: 0.5 }}
+            zIndex={1000}
+            image={{ uri: userPng }}
+            tracksViewChanges={false}
+          />
+        ) : (
+          <Marker
+            key="user_fallback"
+            coordinate={{ latitude, longitude }}
+            zIndex={1000}
+            pinColor={colors.primary}
+          />
+        )}
 
         {venuesWithCoords.map((venue) => {
           const png = venuePng.get(venue.id);
@@ -508,10 +525,6 @@ const styles = StyleSheet.create({
   },
   venueMarkerImg: { width: VENUE_W, height: VENUE_H },
   userMarkerImg: { width: USER_SIZE, height: USER_SIZE },
-  // Fallback user-location marker shown until the styled view-shot png is ready
-  // (or if it never captures) — guarantees the location dot is always visible.
-  userFallbackMarker: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,188,121,0.28)' },
-  userFallbackDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.white },
   captureVenue: { width: VENUE_W, height: VENUE_H, alignItems: 'center', backgroundColor: 'transparent' },
   captureUser: { width: USER_SIZE, height: USER_SIZE, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   markerPill: {

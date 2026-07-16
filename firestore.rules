@@ -214,11 +214,15 @@ service cloud.firestore {
           : null);
     }
 
-    // A check-in's recorded GPS must be within CHECKIN_RADIUS of the venue — you
-    // can't mark presence unless you were actually there. Uses the LatLng.distance()
-    // geodesic (metres); 300m is a touch wider than the client's 200m circle so a
-    // legit client check-in never gets rejected, while still blocking check-ins from
-    // afar. (venueGeo also enforces that the venue exists and has coordinates.)
+    // A check-in's recorded GPS must be within CHECKIN_RADIUS of the venue. Uses the
+    // LatLng.distance() geodesic (metres); 300m is a touch wider than the client's
+    // 200m circle so a legit client check-in never gets rejected, while still
+    // blocking check-ins recorded from afar. (venueGeo also enforces the venue
+    // exists and has coordinates.)
+    // NOTE: lat/lng are client-supplied, so this is NOT spoof-proof — a raw client
+    // could report fake coordinates near the venue. It enforces the honest-client
+    // path and raises the bar; true presence attestation would need a trusted
+    // server / device integrity signal (deferred).
     function checkinNearVenue() {
       let geo = venueGeo(request.resource.data.venueId);
       return geo != null

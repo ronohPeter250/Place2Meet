@@ -43,9 +43,11 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   // A victim's presence entry (for the delete-IDOR test).
   await setDoc(doc(db, 'venue_presence_entries/VICT'), { venueId: 'vX', gender: 'female', expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
   // Venues that the check-in tests target (check-in now requires the venue to exist).
-  for (const v of ['v1', 'v2', 'v3', 'v4', 'v9', 'vP', 'vR', 'vX']) {
+  for (const v of ['v1', 'v2', 'v3', 'v4', 'v9', 'vP', 'vR', 'vX', 'vSA', 'vSB']) {
     await setDoc(doc(db, 'venues/' + v), { name: v, location: new GeoPoint(32.08, 34.78) });
   }
+  // A venue that EXISTS but has NO coordinates — check-in there must be denied.
+  await setDoc(doc(db, 'venues/vNC'), { name: 'vNC' });
   // G = incomplete profile with no gender yet (to verify onboarding can still set it).
   await setDoc(doc(db, 'users/G'), { name: 'G', profileComplete: false });
 });
@@ -104,6 +106,25 @@ await no('checkin pointing at an existing (victim) entry denied', setDoc(doc(A, 
 await no('checkin too far from venue denied', setDoc(doc(A, 'checkins/A_v9far'), { userId:'A', venueId:'v9', gender:'male', lat: 33.5, lng: 35.5, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cifar' }));
 await no('checkin without lat/lng denied', setDoc(doc(A, 'checkins/A_v9nl'), { userId:'A', venueId:'v9', gender:'male', timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cinl' }));
 await ok('checkin at a BUSINESS venue (coordinates) allowed', setDoc(doc(A, 'checkins/A_BIZ'), { userId:'A', venueId:'BIZ', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cibiz' }));
+await no('checkin at a venue with NO coordinates denied', setDoc(doc(A, 'checkins/A_vNC'), { userId:'A', venueId:'vNC', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'cinc' }));
+// Refresh path: extending a check-in (update expiresAt, NO lat/lng resent) must
+// still be allowed; venueId/gender/entryId stay immutable.
+await ok('refresh checkin: extend expiresAt without resending coords', updateDoc(doc(A, 'checkins/A_v1'), { expiresAt: inMs(4*3600*1000) }));
+await no('checkin update cannot change venueId', updateDoc(doc(A, 'checkins/A_v1'), { venueId: 'v2', expiresAt: inMs(3600*1000) }));
+await no('checkin update cannot change gender', updateDoc(doc(A, 'checkins/A_v1'), { gender: 'female', expiresAt: inMs(3600*1000) }));
+// Heaviest path: venue SWITCH = co-delete old checkin+entry AND create new
+// checkin+entry (with the proximity gets) in ONE batch — must stay under the
+// document-access limit.
+const mkSw = writeBatch(A);
+mkSw.set(doc(A, 'checkins/A_vSA'), { userId:'A', venueId:'vSA', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ENTSA' });
+mkSw.set(doc(A, 'venue_presence_entries/ENTSA'), { venueId:'vSA', gender:'male', expiresAt: inMs(4*3600*1000) });
+await ok('switch: initial check-in at vSA', mkSw.commit());
+const sw = writeBatch(A);
+sw.delete(doc(A, 'venue_presence_entries/ENTSA'));
+sw.delete(doc(A, 'checkins/A_vSA'));
+sw.set(doc(A, 'checkins/A_vSB'), { userId:'A', venueId:'vSB', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ENTSB' });
+sw.set(doc(A, 'venue_presence_entries/ENTSB'), { venueId:'vSB', gender:'male', expiresAt: inMs(4*3600*1000) });
+await ok('switch venue in one batch (co-delete old + create new, under access limit)', sw.commit());
 
 console.log('\n[R1 fixes — swipe id binding / checkins list / profileComplete / reads+metadata]');
 await no('forge reverse swipe (id B_A, fromUser A) denied', setDoc(doc(A, 'swipes/B_A'), { fromUser: 'A', toUser: 'B', action: 'like', timestamp: serverTimestamp() }));
