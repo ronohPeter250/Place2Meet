@@ -216,6 +216,19 @@ function UserCapture({ photo, onCaptured }: { photo?: string; onCaptured: (uri: 
   );
 }
 
+// Haversine metres — used to throttle how often the live GPS is PERSISTED to
+// Firestore (the visual marker still follows every update).
+function distMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+const PERSIST_MIN_METERS = 75;
+const PERSIST_MIN_MS = 45000;
+
 export default function MapScreen() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -244,7 +257,12 @@ export default function MapScreen() {
   const mounted = useRef(true);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pngNudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastLocWrite = useRef<string | null>(null);
+  // Whether the Map tab is currently focused — location is only PERSISTED while
+  // focused, so a backgrounded tab doesn't keep writing. And the last-persisted
+  // point, to throttle writes by distance/time (the visual marker still updates
+  // live regardless of these — this only bounds Firestore write volume).
+  const focusedRef = useRef(true);
+  const lastPersist = useRef<{ lat: number; lng: number; t: number } | null>(null);
 
   useEffect(() => {
     mounted.current = true;
@@ -271,8 +289,10 @@ export default function MapScreen() {
   // their keys) and nudge the map so the pre-rendered marker PNGs re-rasterise.
   useFocusEffect(
     useCallback(() => {
+      focusedRef.current = true;
       setFocusEpoch(e => e + 1);
       doNudge('focus');
+      return () => { focusedRef.current = false; };
     }, [doNudge]),
   );
 
@@ -338,20 +358,21 @@ export default function MapScreen() {
     // Only persist a REAL fix: require permission granted AND no fetch error —
     // otherwise a granted-but-GPS-failed session would still write useLocation's
     // default Tel Aviv coordinate as the user's location.
-    if (user && granted && !locationError && latitude != null && longitude != null && !locationLoading) {
-      // Skip redundant writes (e.g. when `user` gets a new reference on a token
-      // refresh but the coordinates are unchanged).
-      const key = `${user.uid}:${latitude.toFixed(5)}:${longitude.toFixed(5)}`;
-      if (lastLocWrite.current === key) return;
-      // Dedup immediately so a re-render mid-flight doesn't fire a duplicate write,
-      // but clear the key on failure so a same-coordinate retry can still happen.
-      lastLocWrite.current = key;
-      updateUserLocation(user.uid, latitude, longitude)
-        .catch((err) => {
-          lastLocWrite.current = null;
-          debugLog('MAP', 'location update failed', { error: String(err) });
-        });
-    }
+    if (!(user && granted && !locationError && latitude != null && longitude != null && !locationLoading)) return;
+    // Only persist while the Map tab is focused (no background write stream), and
+    // throttle by distance/time so the live watch (which delivers every ~10m) does
+    // NOT amplify into ~2 Firestore writes per 10m travelled. The visual marker
+    // still follows every update — this bounds writes, not the display.
+    if (!focusedRef.current) return;
+    const last = lastPersist.current;
+    const now = Date.now();
+    if (last && distMeters(last.lat, last.lng, latitude, longitude) < PERSIST_MIN_METERS && (now - last.t) < PERSIST_MIN_MS) return;
+    lastPersist.current = { lat: latitude, lng: longitude, t: now };
+    updateUserLocation(user.uid, latitude, longitude)
+      .catch((err) => {
+        lastPersist.current = last;  // revert so a retry can happen
+        debugLog('MAP', 'location update failed', { error: String(err) });
+      });
   }, [user, granted, locationError, latitude, longitude, locationLoading]);
 
   // Whenever a new marker png arrives, nudge the map so it re-rasterises and

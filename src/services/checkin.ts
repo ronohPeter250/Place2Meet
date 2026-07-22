@@ -63,14 +63,18 @@ export class CheckInError extends Error {
   }
 }
 
-// A check-in writes two docs:
-//  - checkins/{uid}_{venueId} (PRIVATE): the user's own record, so they can
-//    check out and so the map knows whether *they* are checked in.
-//  - venue_presence_entries/{autoId} (PUBLIC read): the identity-free tally
-//    entry — { venueId, gender, expiresAt } with NO userId — so anyone can count
-//    per-gender presence per venue WITHOUT being able to enumerate who is where.
-// The two are coupled by the rules: an entry can only be created/deleted by the
-// owner of the matching check-in that references it.
+// A check-in writes THREE docs:
+//  - checkins/{uid}_{venueId} (PRIVATE, owner/venue-owner/admin only): the user's
+//    own record (holds their exact lat/lng) so they can check out and the map knows
+//    whether *they* are checked in.
+//  - venue_presence_entries/{autoId} (public read, IDENTITY-FREE — venueId/gender/
+//    expiresAt, NO userId): so anyone can COUNT per-gender presence per venue,
+//    globally, without being able to enumerate WHO is where.
+//  - venue_presence/{venueId}/present/{uid} (public read but VENUE-SCOPED): carries
+//    identity (doc id = uid) so the venue detail can show who's here — but because
+//    it lives under a specific venue and is not globally queryable, it can't be used
+//    to track a user across venues or dump the whole user base's whereabouts.
+// All are coupled by the rules to the caller's own matching check-in.
 export async function checkInToVenue(
   venueId: string,
   userCoords: { lat: number; lng: number },
@@ -122,8 +126,9 @@ export async function checkInToVenue(
   // (the rules require the entry to be co-deleted).
   existing.docs.forEach(d => {
     if (d.id === checkinId) return;
-    const oldEntryId = (d.data() as { entryId?: string }).entryId;
-    if (oldEntryId) batch.delete(doc(db, 'venue_presence_entries', oldEntryId));
+    const data = d.data() as { entryId?: string; venueId?: string };
+    if (data.entryId) batch.delete(doc(db, 'venue_presence_entries', data.entryId));
+    if (data.venueId) batch.delete(doc(db, 'venue_presence', data.venueId, 'present', uid));
     batch.delete(d.ref);
   });
 
@@ -132,11 +137,13 @@ export async function checkInToVenue(
     // duplicate presence is created. Use set (not update) so a stale check-in
     // whose entry was already cleaned still succeeds (re-creates the entry).
     const entryId = (same.data() as { entryId: string }).entryId;
-    batch.set(doc(db, 'venue_presence_entries', entryId), { venueId, gender, userId: uid, expiresAt });
+    batch.set(doc(db, 'venue_presence_entries', entryId), { venueId, gender, expiresAt });
+    batch.set(doc(db, 'venue_presence', venueId, 'present', uid), { gender, expiresAt });
     batch.update(doc(db, 'checkins', checkinId), { expiresAt });
   } else {
     const entryRef = doc(collection(db, 'venue_presence_entries'));
-    batch.set(entryRef, { venueId, gender, userId: uid, expiresAt });
+    batch.set(entryRef, { venueId, gender, expiresAt });
+    batch.set(doc(db, 'venue_presence', venueId, 'present', uid), { gender, expiresAt });
     batch.set(doc(db, 'checkins', checkinId), {
       userId: uid,
       venueId,
@@ -160,8 +167,9 @@ export async function checkOut(): Promise<void> {
 
   const batch = writeBatch(db);
   existing.docs.forEach(d => {
-    const oldEntryId = (d.data() as { entryId?: string }).entryId;
-    if (oldEntryId) batch.delete(doc(db, 'venue_presence_entries', oldEntryId));
+    const data = d.data() as { entryId?: string; venueId?: string };
+    if (data.entryId) batch.delete(doc(db, 'venue_presence_entries', data.entryId));
+    if (data.venueId) batch.delete(doc(db, 'venue_presence', data.venueId, 'present', uid));
     batch.delete(d.ref);
   });
   await batch.commit();
@@ -203,28 +211,33 @@ export async function getAllActiveCheckinCounts(): Promise<Map<string, number>> 
 }
 
 // LIVE version of getAllActiveCheckinCounts: fires immediately and again on every
-// presence write, so the map badge reflects check-ins/-outs in real time (fixes
-// the marker that never moved when someone marked "I'm here").
+// presence write, so the map badge reflects check-ins/-outs in real time. Reads the
+// IDENTITY-FREE venue_presence_entries (venueId/gender/expiresAt only) — safe to
+// query globally because it carries no userId.
 export function subscribeAllActiveCheckinCounts(
   onChange: (counts: Map<string, number>) => void,
 ): () => void {
-  const now = Timestamp.now();
-  const q = query(collection(db, 'venue_presence_entries'), where('expiresAt', '>', now));
-  return onSnapshot(
-    q,
-    (snap) => {
-      const counts = new Map<string, number>();
-      for (const d of snap.docs) {
-        const data = d.data() as { venueId: string; expiresAt?: Timestamp };
-        // The query's `now` is frozen at subscribe time — drop entries that have
-        // since expired so a lingering doc doesn't inflate the live count.
-        if (data.expiresAt && data.expiresAt.toMillis() <= Date.now()) continue;
-        counts.set(data.venueId, (counts.get(data.venueId) ?? 0) + 1);
-      }
-      onChange(counts);
-    },
-    () => { /* best-effort badge */ },
-  );
+  const q = query(collection(db, 'venue_presence_entries'), where('expiresAt', '>', Timestamp.now()));
+  let lastDocs: { venueId: string; expiresAt?: Timestamp }[] = [];
+  let lastKey = '';
+  const recompute = () => {
+    const counts = new Map<string, number>();
+    for (const data of lastDocs) {
+      // The query's `now` is frozen at subscribe time — re-apply expiry against the
+      // real clock (also on a timer) so counts drop as entries lapse during a quiet
+      // period with no new snapshot.
+      if (data.expiresAt && data.expiresAt.toMillis() <= Date.now()) continue;
+      counts.set(data.venueId, (counts.get(data.venueId) ?? 0) + 1);
+    }
+    // Skip a no-op re-render (avoids re-rendering the whole map on unrelated writes).
+    const key = [...counts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, v]) => `${k}:${v}`).join(',');
+    if (key === lastKey) return;
+    lastKey = key;
+    onChange(counts);
+  };
+  const unsub = onSnapshot(q, (snap) => { lastDocs = snap.docs.map(d => d.data() as { venueId: string; expiresAt?: Timestamp }); recompute(); }, () => { /* best-effort */ });
+  const timer = setInterval(recompute, 45000);
+  return () => { clearInterval(timer); unsub(); };
 }
 
 // LIVE per-gender presence for ONE venue (drives the venue popup / detail counts).
@@ -232,43 +245,45 @@ export function subscribeVenueActiveCounts(
   venueId: string,
   onChange: (counts: { male: number; female: number; other: number }) => void,
 ): () => void {
-  const now = Timestamp.now();
   const q = query(
     collection(db, 'venue_presence_entries'),
     where('venueId', '==', venueId),
-    where('expiresAt', '>', now),
+    where('expiresAt', '>', Timestamp.now()),
   );
-  return onSnapshot(
-    q,
-    (snap) => {
-      const counts = { male: 0, female: 0, other: 0 };
-      for (const d of snap.docs) {
-        const data = d.data() as { gender?: string; expiresAt?: Timestamp };
-        if (data.expiresAt && data.expiresAt.toMillis() <= Date.now()) continue;
-        counts[normalizeGender(data.gender)]++;
-      }
-      onChange(counts);
-    },
-    () => { /* best-effort */ },
-  );
+  let lastDocs: { gender?: string; expiresAt?: Timestamp }[] = [];
+  let lastKey = '';
+  const recompute = () => {
+    const counts = { male: 0, female: 0, other: 0 };
+    for (const data of lastDocs) {
+      if (data.expiresAt && data.expiresAt.toMillis() <= Date.now()) continue;
+      counts[normalizeGender(data.gender)]++;
+    }
+    const key = `${counts.male},${counts.female},${counts.other}`;
+    if (key === lastKey) return;
+    lastKey = key;
+    onChange(counts);
+  };
+  const unsub = onSnapshot(q, (snap) => { lastDocs = snap.docs.map(d => d.data() as { gender?: string; expiresAt?: Timestamp }); recompute(); }, () => { /* best-effort */ });
+  const timer = setInterval(recompute, 45000);
+  return () => { clearInterval(timer); unsub(); };
 }
 
-// The distinct userIds currently present at a venue (presence entries now carry
-// userId). Used by the venue detail screen to show WHO is here right now.
+// The distinct userIds currently present at a venue. Reads the VENUE-SCOPED
+// subcollection venue_presence/{venueId}/present/{uid} (doc id == uid) — which,
+// unlike the flat entries, is NOT globally queryable, so it can't be used to track
+// a specific user across venues or to dump the whole user base's whereabouts.
 export async function getVenuePresentUserIds(venueId: string): Promise<string[]> {
-  const now = Timestamp.now();
   const snap = await getDocs(query(
-    collection(db, 'venue_presence_entries'),
-    where('venueId', '==', venueId),
-    where('expiresAt', '>', now),
+    collection(db, 'venue_presence', venueId, 'present'),
+    where('expiresAt', '>', Timestamp.now()),
   ));
-  const ids = new Set<string>();
+  const ids: string[] = [];
   for (const d of snap.docs) {
-    const data = d.data() as { userId?: string; expiresAt?: Timestamp };
+    const data = d.data() as { expiresAt?: Timestamp };
     if (data.expiresAt && data.expiresAt.toMillis() <= Date.now()) continue;
-    if (data.userId) ids.add(data.userId);
+    ids.push(d.id);
   }
-  return Array.from(ids);
+  return ids;
 }
 
 export async function getCurrentUserCheckIn(): Promise<CheckIn | null> {

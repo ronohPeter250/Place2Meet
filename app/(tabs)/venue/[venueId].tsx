@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
 import { Header } from '../../../src/components/layout/Header';
@@ -46,9 +46,12 @@ export default function VenueDetailScreen() {
   const router = useRouter();
 
   const [presentCount, setPresentCount] = useState(0);
+  const [selfPresent, setSelfPresent] = useState(false);
   const [presentUsers, setPresentUsers] = useState<UserProfile[]>([]);
   const [registeredUsers, setRegisteredUsers] = useState<UserProfile[]>([]);
   const [matchCount, setMatchCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   // Live "who's here now" count.
   useEffect(() => {
@@ -72,9 +75,11 @@ export default function VenueDetailScreen() {
       (async () => {
         try {
           const [presentIds, registeredIds] = await Promise.all([
-            getVenuePresentUserIds(venueId).catch(() => [] as string[]),
-            getVenueRegisteredUserIds(venueId).catch(() => [] as string[]),
+            getVenuePresentUserIds(venueId),
+            getVenueRegisteredUserIds(venueId),
           ]);
+          if (cancelled) return;
+          setSelfPresent(!!user && presentIds.includes(user.uid));
           const selfExcluded = (ids: string[]) => ids.filter(id => id !== user?.uid);
           const [present, registered] = await Promise.all([
             fetchProfiles(selfExcluded(presentIds)),
@@ -85,8 +90,12 @@ export default function VenueDetailScreen() {
           // Don't list a registered user twice if they're also present.
           const presentSet = new Set(present.map(p => p.uid));
           setRegisteredUsers(registered.filter(r => !presentSet.has(r.uid)));
+          setError(false);
         } catch (err) {
           console.error('[VenueDetailScreen] load failed:', err);
+          if (!cancelled) setError(true);
+        } finally {
+          if (!cancelled) setLoading(false);
         }
       })();
       return () => { cancelled = true; };
@@ -112,13 +121,22 @@ export default function VenueDetailScreen() {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.presentCount}>{presentCount} נמצאים כאן עכשיו</Text>
+        {/* Count excludes you, to match the grids below (which show OTHERS to tap). */}
+        <Text style={styles.presentCount}>{Math.max(0, presentCount - (selfPresent ? 1 : 0))} נמצאים כאן עכשיו</Text>
 
-        <Text style={styles.sectionTitle}>מי כאן עכשיו</Text>
-        <UserGrid users={presentUsers} onPress={openUser} emptyText="אף אחד לא סימן נוכחות כאן כרגע" />
+        {loading ? (
+          <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+        ) : error ? (
+          <Text style={styles.errorText}>שגיאה בטעינת המקום. בדוק את החיבור לאינטרנט ונסה שוב.</Text>
+        ) : (
+          <>
+            <Text style={styles.sectionTitle}>מי כאן עכשיו</Text>
+            <UserGrid users={presentUsers} onPress={openUser} emptyText="אף אחד לא סימן נוכחות כאן כרגע" />
 
-        <Text style={styles.sectionTitle}>רשומים לאירועים כאן</Text>
-        <UserGrid users={registeredUsers} onPress={openUser} emptyText="אין רשומים לאירועים כאן" />
+            <Text style={styles.sectionTitle}>רשומים לאירועים כאן</Text>
+            <UserGrid users={registeredUsers} onPress={openUser} emptyText="אין רשומים לאירועים כאן" />
+          </>
+        )}
       </ScrollView>
     </ScreenWrapper>
   );
@@ -140,4 +158,6 @@ const styles = StyleSheet.create({
   avatarPlaceholder: { backgroundColor: colors.surfaceLight },
   userName: { ...typography.caption, color: colors.text, textAlign: 'center', marginTop: 6, width: AVATAR },
   emptyText: { ...typography.caption, color: colors.textSecondary, textAlign: 'right' },
+  center: { paddingTop: 48, alignItems: 'center' },
+  errorText: { ...typography.body, color: colors.textSecondary, textAlign: 'center', marginTop: 40 },
 });

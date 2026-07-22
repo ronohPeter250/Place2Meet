@@ -3,7 +3,7 @@
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import {
-  doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, where, serverTimestamp,
+  doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, collectionGroup, query, where, serverTimestamp,
   GeoPoint, Timestamp, writeBatch,
 } from 'firebase/firestore';
 
@@ -63,6 +63,10 @@ const BIZ = testEnv.authenticatedContext('BIZ').firestore();
 
 console.log('\n[swipes]');
 await ok('A creates own like swipe A->B', setDoc(doc(A, 'swipes/A_B'), { fromUser:'A', toUser:'B', action:'like', timestamp: serverTimestamp() }));
+await ok('swipe owner flips own action to dislike', updateDoc(doc(A, 'swipes/A_B'), { action: 'dislike' }));
+await ok('swipe owner flips own action back to like', updateDoc(doc(A, 'swipes/A_B'), { action: 'like' }));
+await no('swipe update cannot change fromUser', updateDoc(doc(A, 'swipes/A_B'), { fromUser: 'X' }));
+await no('non-owner cannot update a swipe', updateDoc(doc(B, 'swipes/A_B'), { action: 'dislike' }));
 await no('invalid action rejected', setDoc(doc(A, 'swipes/A_C'), { fromUser:'A', toUser:'C', action:'superlike', timestamp: serverTimestamp() }));
 await no('forged fromUser rejected', setDoc(doc(A, 'swipes/X_B'), { fromUser:'X', toUser:'B', action:'like', timestamp: serverTimestamp() }));
 // The disputed list rule: A querying its OWN swipes (where fromUser==A) must be ALLOWED.
@@ -117,13 +121,13 @@ await no('checkin update cannot change gender', updateDoc(doc(A, 'checkins/A_v1'
 // document-access limit.
 const mkSw = writeBatch(A);
 mkSw.set(doc(A, 'checkins/A_vSA'), { userId:'A', venueId:'vSA', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ENTSA' });
-mkSw.set(doc(A, 'venue_presence_entries/ENTSA'), { venueId:'vSA', gender:'male', userId:'A', expiresAt: inMs(4*3600*1000) });
+mkSw.set(doc(A, 'venue_presence_entries/ENTSA'), { venueId:'vSA', gender:'male', expiresAt: inMs(4*3600*1000) });
 await ok('switch: initial check-in at vSA', mkSw.commit());
 const sw = writeBatch(A);
 sw.delete(doc(A, 'venue_presence_entries/ENTSA'));
 sw.delete(doc(A, 'checkins/A_vSA'));
 sw.set(doc(A, 'checkins/A_vSB'), { userId:'A', venueId:'vSB', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ENTSB' });
-sw.set(doc(A, 'venue_presence_entries/ENTSB'), { venueId:'vSB', gender:'male', userId:'A', expiresAt: inMs(4*3600*1000) });
+sw.set(doc(A, 'venue_presence_entries/ENTSB'), { venueId:'vSB', gender:'male', expiresAt: inMs(4*3600*1000) });
 await ok('switch venue in one batch (co-delete old + create new, under access limit)', sw.commit());
 
 console.log('\n[R1 fixes — swipe id binding / checkins list / profileComplete / reads+metadata]');
@@ -181,20 +185,27 @@ console.log('\n[venue_presence_entries — identity-free live counts coupled to 
 // Legit check-in: private check-in + public entry (referencing it) in one batch.
 const ci = writeBatch(A);
 ci.set(doc(A, 'checkins/A_vP'), { userId: 'A', venueId: 'vP', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT1' });
-ci.set(doc(A, 'venue_presence_entries/ENT1'), { venueId: 'vP', gender: 'male', userId: 'A', expiresAt: inMs(4 * 3600 * 1000) });
+ci.set(doc(A, 'venue_presence_entries/ENT1'), { venueId: 'vP', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) });
 await ok('check-in creates coupled presence entry', ci.commit());
 // Forge a presence entry with no matching check-in.
-await no('presence entry without matching check-in denied', setDoc(doc(A, 'venue_presence_entries/FORGE'), { venueId: 'vQ', gender: 'male', userId: 'A', expiresAt: inMs(4 * 3600 * 1000) }));
+await no('presence entry without matching check-in denied', setDoc(doc(A, 'venue_presence_entries/FORGE'), { venueId: 'vQ', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
 // Gender must match the check-in it is coupled to.
 const gm = writeBatch(A);
 gm.set(doc(A, 'checkins/A_vR'), { userId: 'A', venueId: 'vR', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT2' });
-gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female', userId: 'A', expiresAt: inMs(4 * 3600 * 1000) });
+gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female', expiresAt: inMs(4 * 3600 * 1000) });
 await no('presence entry gender mismatch denied', gm.commit());
 // Anyone may LIST entries to count — but they carry no userId, so no enumeration.
 await ok('list presence entries by venue (aggregate only)', getDocs(query(collection(B, 'venue_presence_entries'), where('venueId', '==', 'vP'))));
 // The coupled owner may refresh expiresAt (re-check-in reuses the entry).
 await ok('coupled owner refreshes entry expiresAt', updateDoc(doc(A, 'venue_presence_entries/ENT1'), { expiresAt: inMs(4 * 3600 * 1000) }));
-await no('presence entry userId cannot be reassigned to another user', updateDoc(doc(A, 'venue_presence_entries/ENT1'), { userId: 'B', expiresAt: inMs(4 * 3600 * 1000) }));
+// Venue-scoped presence IDENTITY (venue_presence/{venueId}/present/{uid}) — coupled
+// to the caller's own check-in, owner-pinned, and readable only per-venue.
+await ok('present doc coupled to own check-in allowed', setDoc(doc(A, 'venue_presence/vP/present/A'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
+await no('present doc for ANOTHER uid denied', setDoc(doc(A, 'venue_presence/vP/present/B'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
+await no('present doc without a matching check-in denied', setDoc(doc(A, 'venue_presence/vQ/present/A'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
+await no('present doc with mismatched gender denied', setDoc(doc(A, 'venue_presence/vP/present/A'), { gender: 'female', expiresAt: inMs(4 * 3600 * 1000) }));
+await ok('present list is readable per-venue', getDocs(collection(B, 'venue_presence/vP/present')));
+await no('collectionGroup(present) denied — no cross-venue tracking/dump', getDocs(collectionGroup(B, 'present')));
 await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));
 // Can't delete a check-in while orphaning its entry (blocks churn self-inflation)...
 await no('delete checkin leaving entry orphaned denied', deleteDoc(doc(A, 'checkins/A_vP')));
@@ -256,7 +267,7 @@ console.log('\n[R16 fix — read rules tolerate a NON-EXISTENT doc (transaction 
 // rule must return not-found, not error on resource.data and deny the whole tx.
 await ok('get non-existent chat returns not-found (null-resource guard)', getDoc(doc(A, 'chats/ZZZ_NONE')));
 await ok('get non-existent registration returns not-found', getDoc(doc(A, 'registrations/A_NONE')));
-await ok('get non-existent checkin returns not-found', getDoc(doc(A, 'checkins/A_NONE')));
+await no('get non-existent checkin denied (no existence oracle for stalking)', getDoc(doc(A, 'checkins/A_NONE')));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');
 const heavyHeb = 'א'.repeat(1500); // 1500 chars = 3000 UTF-8 bytes

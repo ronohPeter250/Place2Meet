@@ -238,10 +238,13 @@ service cloud.firestore {
       // own venue's activity (business dashboard / admin analytics) — a regular
       // user's uid is never a venueId, so they still can't enumerate anyone.
       // get is scoped the same as list — otherwise a stalker could probe
-      // checkins/{targetUid}_{venueId} per venue to locate a specific person.
+      // checkins/{targetUid}_{venueId} per venue to locate a specific person. No
+      // resource==null exemption here (unlike other collections): the app never
+      // reads a specific checkin doc directly (only owner/venue queries), and a
+      // null-exemption would leak an existence oracle (not-found vs permission-denied
+      // distinguishes "is this user checked in here").
       allow get: if isActiveActor()
-        && (resource == null
-            || resource.data.userId == request.auth.uid
+        && (resource.data.userId == request.auth.uid
             || resource.data.venueId == request.auth.uid
             || isAdmin());
       allow list: if isActiveActor()
@@ -289,34 +292,25 @@ service cloud.firestore {
             || getAfter(/databases/$(database)/documents/venue_presence_entries/$(resource.data.entryId)) == null);
     }
 
-    // Venue presence entry: { venueId, gender, userId, expiresAt }. By product
-    // decision this is NO LONGER anonymous — an active user may LIST a venue's
-    // entries to see who is checked in there right now (this is a discovery app;
-    // checking in is opting in to being seen at that venue). It intentionally does
-    // NOT carry the user's exact GPS — that stays in the owner-only checkins doc —
-    // so it reveals venue-level presence, not precise coordinates, and since a user
-    // holds only one check-in at a time it exposes only their current venue.
-    // Integrity is enforced by coupling each entry to the caller's own check-in
-    // (checkins/{uid}_{venueId}): an entry can only be created/deleted alongside it.
+    // Venue presence ENTRY: { venueId, gender, expiresAt } — IDENTITY-FREE (no
+    // userId). Any active user may LIST them to COUNT per-gender presence per venue
+    // globally, WITHOUT being able to learn who is where. Integrity is enforced by
+    // coupling each entry to the caller's own check-in (checkins/{uid}_{venueId}).
     match /venue_presence_entries/{entryId} {
       allow read: if isActiveActor();
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'userId', 'expiresAt'])
-        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
         && request.resource.data.gender in ['male', 'female', 'other']
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h')
         && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + request.resource.data.venueId)).data.entryId == entryId
         && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + request.resource.data.venueId)).data.gender == request.resource.data.gender;
-      // The coupled owner may only refresh expiresAt (venueId/gender frozen) — used
-      // when re-checking-in at the same venue, so no new entry is spawned.
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId
-        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'userId', 'expiresAt'])
-        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
         && request.resource.data.venueId == resource.data.venueId
         && request.resource.data.gender == resource.data.gender
         && request.resource.data.expiresAt is timestamp
@@ -325,6 +319,28 @@ service cloud.firestore {
       allow delete: if request.auth != null
         && isActiveUser(request.auth.uid)
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId;
+    }
+
+    // Venue-scoped PRESENCE IDENTITY: venue_presence/{venueId}/present/{uid} =
+    // { gender, expiresAt } (doc id = uid). This DOES reveal who is checked in at a
+    // venue (product decision — checking in opts you into being seen there), but as a
+    // per-venue subcollection it is NOT globally queryable: you cannot track a user
+    // across venues or dump everyone's whereabouts. A collectionGroup read on
+    // 'present' matches no rule and is therefore DENIED. Carries NO GPS. Coupled to
+    // the caller's own check-in at this venue.
+    match /venue_presence/{venueId}/present/{uid} {
+      allow read: if isActiveActor();
+      allow create, update: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['gender', 'expiresAt'])
+        && request.resource.data.gender in ['male', 'female', 'other']
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(5, 'h')
+        && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId)).data.userId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId)).data.gender == request.resource.data.gender;
+      allow delete: if request.auth != null && uid == request.auth.uid;
     }
 
     match /swipes/{swipeId} {
@@ -348,7 +364,16 @@ service cloud.firestore {
         && request.resource.data.action in ['like', 'dislike']
         && swipeId == request.resource.data.fromUser + '_' + request.resource.data.toUser
         && request.resource.data.toUser != request.resource.data.fromUser;
-      allow update, delete: if false;
+      // A swipe owner may flip their OWN action (e.g. re-liking from a venue profile
+      // someone they already swiped in the deck) — fromUser/toUser stay frozen so the
+      // id binding and match integrity are preserved.
+      allow update: if request.auth != null
+        && isActiveUser(request.auth.uid)
+        && resource.data.fromUser == request.auth.uid
+        && request.resource.data.fromUser == resource.data.fromUser
+        && request.resource.data.toUser == resource.data.toUser
+        && request.resource.data.action in ['like', 'dislike'];
+      allow delete: if false;
     }
 
     match /matches/{matchId} {
