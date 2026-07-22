@@ -40,6 +40,9 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   // A registered doc for the genderField-immutability test, and a checkin at BIZ's venue.
   await setDoc(doc(db, 'registrations/A_E3'), { userId: 'A', eventId: 'E3', status: 'registered', genderField: 'male', timestamp: serverTimestamp() });
   await setDoc(doc(db, 'checkins/U_BIZ'), { userId: 'U', venueId: 'BIZ', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
+  // An EXPIRED check-in of C at vP (to verify the present-read co-presence gate
+  // requires a LIVE check-in, not just a lingering one).
+  await setDoc(doc(db, 'checkins/C_vP'), { userId: 'C', venueId: 'vP', timestamp: serverTimestamp(), expiresAt: Timestamp.fromDate(new Date(Date.now() - 3600000)) });
   // A victim's presence entry (for the delete-IDOR test).
   await setDoc(doc(db, 'venue_presence_entries/VICT'), { venueId: 'vX', gender: 'female', expiresAt: Timestamp.fromDate(new Date(Date.now() + 3600000)) });
   // Venues that the check-in tests target (check-in now requires the venue to exist).
@@ -206,6 +209,7 @@ await no('present doc without a matching check-in denied', setDoc(doc(A, 'venue_
 await no('present doc with mismatched gender denied', setDoc(doc(A, 'venue_presence/vP/present/A'), { gender: 'female', expiresAt: inMs(4 * 3600 * 1000) }));
 await ok('present list readable when checked in HERE (A at vP)', getDocs(collection(A, 'venue_presence/vP/present')));
 await no('present list NOT readable when not checked in here (B) — anti-stalking co-presence gate', getDocs(collection(B, 'venue_presence/vP/present')));
+await no('present list NOT readable with an EXPIRED check-in (C) — access lapses with presence', getDocs(collection(C, 'venue_presence/vP/present')));
 await no('collectionGroup(present) denied — no cross-venue tracking/dump', getDocs(collectionGroup(B, 'present')));
 await ok('deleting an already-gone presence entry is a no-op (null-safe, not denied)', deleteDoc(doc(A, 'venue_presence_entries/GHOSTENTRY')));
 await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));

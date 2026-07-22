@@ -335,8 +335,17 @@ service cloud.firestore {
     // read a venue you're not checked in at) and a collectionGroup('present') read
     // matches no rule (denied). Carries NO GPS (that stays in the owner-only checkin).
     match /venue_presence/{venueId}/present/{uid} {
+      // Read requires a LIVE (non-expired) check-in of the reader at this venue, so
+      // access lapses with the presence window (a lingering set-and-forget check-in
+      // can't grant permanent read access). RESIDUAL, documented honestly: check-in
+      // proximity is client-attested (GPS is client-supplied and spoofable — see
+      // checkinNearVenue), so a determined raw client could still mint a check-in at
+      // a venue to read its present list. Closing that fully needs server-side
+      // location attestation (Cloud Function / device integrity), which this
+      // client-only app does not have — tracked as deferred.
       allow read: if isActiveActor()
-        && exists(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId));
+        && exists(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId))
+        && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId)).data.expiresAt > request.time;
       allow create, update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && uid == request.auth.uid
