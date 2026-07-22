@@ -32,14 +32,22 @@ export function debugLog(scope: string, message: string, payload?: unknown): voi
   }
 }
 
-// Firestore can't store undefined, functions, or circular refs. Coerce to a
-// JSON-safe shape; fall back to a string on failure.
-function safeSerialize(v: unknown): unknown {
+// Firestore can't store undefined, functions, or circular refs, and a security
+// rule cannot bound the size of an arbitrary map. Coerce to a JSON-safe, length-
+// bounded STRING so the debug_logs rule can cap payload size and block a client
+// from flooding the collection with ~1 MiB documents (denial-of-wallet).
+const MAX_PAYLOAD_CHARS = 4000;
+function safeSerialize(v: unknown): string | null {
   if (v === undefined || v === null) return null;
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
+  let s: string | undefined;
   try {
-    return JSON.parse(JSON.stringify(v));
+    s = typeof v === 'string' ? v : JSON.stringify(v);
   } catch {
-    try { return String(v); } catch { return '[unserializable]'; }
+    s = undefined;  // circular refs etc.
   }
+  if (s === undefined) {
+    // JSON.stringify returns undefined for functions/symbols; last-resort coerce.
+    try { s = String(v); } catch { s = '[unserializable]'; }
+  }
+  return s.length > MAX_PAYLOAD_CHARS ? s.slice(0, MAX_PAYLOAD_CHARS) + '…[truncated]' : s;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, Dimensions, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
@@ -30,6 +30,14 @@ export default function ViewUserScreen() {
 
   const isSelf = !!user && !!userId && user.uid === userId;
 
+  // Guards against a late-resolving like firing an Alert / navigating after the
+  // user already left this pushed screen (header/hardware back during the round-trip).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
@@ -52,15 +60,19 @@ export default function ViewUserScreen() {
     setLiking(true);
     try {
       const isMatch = await createSwipe(userId, 'like');
+      if (!mountedRef.current) return;  // user left mid-like — don't alert/navigate.
       if (isMatch) {
         // Mutual like — open (or create) the chat and jump into it.
         const { createChatForMatch } = await import('../../../src/services/chat');
+        if (!mountedRef.current) return;
         try {
           const chatId = await createChatForMatch(user.uid, userId);
+          if (!mountedRef.current) return;
           Alert.alert('יש התאמה! 🎉', 'אתם יכולים להתחיל לשוחח.', [
             { text: 'לצ\'אט', onPress: () => router.replace(`/(tabs)/chat/${chatId}`) },
           ]);
         } catch {
+          if (!mountedRef.current) return;
           Alert.alert('יש התאמה! 🎉', 'אתם יכולים להתחיל לשוחח.', [
             { text: 'לצ\'אטים', onPress: () => router.replace('/(tabs)/chat') },
           ]);
@@ -72,9 +84,9 @@ export default function ViewUserScreen() {
       }
     } catch (err) {
       console.error('[ViewUserScreen] like failed:', err);
-      Alert.alert('שגיאה', 'לא ניתן לשלוח לייק כרגע. נסה שוב.');
+      if (mountedRef.current) Alert.alert('שגיאה', 'לא ניתן לשלוח לייק כרגע. נסה שוב.');
     } finally {
-      setLiking(false);
+      if (mountedRef.current) setLiking(false);
     }
   }, [user, userId, isSelf, liking, router]);
 

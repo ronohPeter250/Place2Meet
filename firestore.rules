@@ -560,7 +560,12 @@ service cloud.firestore {
         // with arbitrary/oversized documents.
         && request.resource.data.keys().hasOnly(['scope', 'message', 'payload', 'uid', 'timestamp'])
         && (!('message' in request.resource.data) || (request.resource.data.message is string && request.resource.data.message.size() <= 2000))
-        && (!('scope' in request.resource.data) || (request.resource.data.scope is string && request.resource.data.scope.size() <= 200));
+        && (!('scope' in request.resource.data) || (request.resource.data.scope is string && request.resource.data.scope.size() <= 200))
+        // payload must be null or a bounded string — the client serializes it to a
+        // capped string; this stops a raw client writing a ~1 MiB map/array/string.
+        && (!('payload' in request.resource.data)
+            || request.resource.data.payload == null
+            || (request.resource.data.payload is string && request.resource.data.payload.size() <= 8000));
       allow update, delete: if false;
     }
 

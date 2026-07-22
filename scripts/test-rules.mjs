@@ -286,8 +286,12 @@ try {
 
 console.log('\n[debug_logs]');
 await no('non-admin cannot read debug_logs', getDocs(collection(A, 'debug_logs')));
-await ok('debug_logs create with whitelisted fields allowed', setDoc(doc(A, 'debug_logs/dl1'), { scope: 's', message: 'm', payload: {}, uid: 'A', timestamp: serverTimestamp() }));
+await ok('debug_logs create with a bounded string payload allowed', setDoc(doc(A, 'debug_logs/dl1'), { scope: 's', message: 'm', payload: '{"k":"v"}', uid: 'A', timestamp: serverTimestamp() }));
+await ok('debug_logs create with null payload allowed', setDoc(doc(A, 'debug_logs/dl1b'), { scope: 's', message: 'm', payload: null, uid: 'A', timestamp: serverTimestamp() }));
 await no('debug_logs create with extra field denied', setDoc(doc(A, 'debug_logs/dl2'), { scope: 's', message: 'm', uid: 'A', timestamp: serverTimestamp(), evil: 'x' }));
+// payload cap (r4): reject an arbitrary map (uncappable by rules) and an oversized string.
+await no('debug_logs create with a MAP payload denied (must be null|string)', setDoc(doc(A, 'debug_logs/dl3'), { scope: 's', message: 'm', payload: { big: 'x' }, uid: 'A', timestamp: serverTimestamp() }));
+await no('debug_logs create with an oversized (>8000) string payload denied', setDoc(doc(A, 'debug_logs/dl4'), { scope: 's', message: 'm', payload: 'x'.repeat(8001), uid: 'A', timestamp: serverTimestamp() }));
 
 await testEnv.cleanup();
 console.log(`\nALL RULES TESTS PASSED (${passed} assertions)`);

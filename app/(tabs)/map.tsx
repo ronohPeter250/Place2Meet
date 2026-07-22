@@ -367,10 +367,13 @@ export default function MapScreen() {
     const last = lastPersist.current;
     const now = Date.now();
     if (last && distMeters(last.lat, last.lng, latitude, longitude) < PERSIST_MIN_METERS && (now - last.t) < PERSIST_MIN_MS) return;
-    lastPersist.current = { lat: latitude, lng: longitude, t: now };
+    const attempt = { lat: latitude, lng: longitude, t: now };
+    lastPersist.current = attempt;
     updateUserLocation(user.uid, latitude, longitude)
       .catch((err) => {
-        lastPersist.current = last;  // revert so a retry can happen
+        // Only revert if no newer persist has since superseded us — otherwise a
+        // slow-failing write would discard a newer successful checkpoint.
+        if (lastPersist.current === attempt) lastPersist.current = last;
         debugLog('MAP', 'location update failed', { error: String(err) });
       });
   }, [user, granted, locationError, latitude, longitude, locationLoading]);
