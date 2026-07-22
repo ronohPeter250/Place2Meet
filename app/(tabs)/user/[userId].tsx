@@ -25,6 +25,7 @@ export default function ViewUserScreen() {
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [liking, setLiking] = useState(false);
 
   const isSelf = !!user && !!userId && user.uid === userId;
@@ -35,9 +36,10 @@ export default function ViewUserScreen() {
     (async () => {
       try {
         const data = await getUserProfile(userId);
-        if (!cancelled) setProfile(data);
+        if (!cancelled) { setProfile(data); setLoadError(false); }
       } catch (err) {
         console.error('[ViewUserScreen] load failed:', err);
+        if (!cancelled) setLoadError(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -85,6 +87,8 @@ export default function ViewUserScreen() {
       <Header />
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+      ) : loadError ? (
+        <View style={styles.center}><Text style={styles.emptyText}>שגיאה בטעינת הפרופיל. בדוק את החיבור ונסה שוב.</Text></View>
       ) : !profile ? (
         <View style={styles.center}><Text style={styles.emptyText}>הפרופיל לא נמצא</Text></View>
       ) : (

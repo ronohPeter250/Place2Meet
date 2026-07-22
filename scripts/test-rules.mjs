@@ -204,8 +204,10 @@ await ok('present doc coupled to own check-in allowed', setDoc(doc(A, 'venue_pre
 await no('present doc for ANOTHER uid denied', setDoc(doc(A, 'venue_presence/vP/present/B'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
 await no('present doc without a matching check-in denied', setDoc(doc(A, 'venue_presence/vQ/present/A'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
 await no('present doc with mismatched gender denied', setDoc(doc(A, 'venue_presence/vP/present/A'), { gender: 'female', expiresAt: inMs(4 * 3600 * 1000) }));
-await ok('present list is readable per-venue', getDocs(collection(B, 'venue_presence/vP/present')));
+await ok('present list readable when checked in HERE (A at vP)', getDocs(collection(A, 'venue_presence/vP/present')));
+await no('present list NOT readable when not checked in here (B) — anti-stalking co-presence gate', getDocs(collection(B, 'venue_presence/vP/present')));
 await no('collectionGroup(present) denied — no cross-venue tracking/dump', getDocs(collectionGroup(B, 'present')));
+await ok('deleting an already-gone presence entry is a no-op (null-safe, not denied)', deleteDoc(doc(A, 'venue_presence_entries/GHOSTENTRY')));
 await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));
 // Can't delete a check-in while orphaning its entry (blocks churn self-inflation)...
 await no('delete checkin leaving entry orphaned denied', deleteDoc(doc(A, 'checkins/A_vP')));

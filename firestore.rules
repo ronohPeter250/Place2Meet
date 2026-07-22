@@ -318,18 +318,25 @@ service cloud.firestore {
         && request.resource.data.expiresAt < request.time + duration.value(5, 'h');
       allow delete: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId;
+        // resource == null: deleting an already-gone entry (e.g. it expired and was
+        // cleaned) is a no-op and must not error — otherwise a checkout / venue-switch
+        // batch that includes the delete would be denied and the user gets stuck.
+        && (resource == null
+            || get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId);
     }
 
     // Venue-scoped PRESENCE IDENTITY: venue_presence/{venueId}/present/{uid} =
-    // { gender, expiresAt } (doc id = uid). This DOES reveal who is checked in at a
-    // venue (product decision — checking in opts you into being seen there), but as a
-    // per-venue subcollection it is NOT globally queryable: you cannot track a user
-    // across venues or dump everyone's whereabouts. A collectionGroup read on
-    // 'present' matches no rule and is therefore DENIED. Carries NO GPS. Coupled to
-    // the caller's own check-in at this venue.
+    // { gender, expiresAt } (doc id = uid). Reveals who is checked in at a venue, but
+    // READ is gated on the reader being CHECKED IN AT THE SAME VENUE — you can see
+    // who else is here only when you are actually here. This is the real anti-stalking
+    // control: a per-venue subcollection alone does NOT stop enumeration (venue ids
+    // are listable, so a raw client could otherwise scan every venue to track a person
+    // or dump all present users). The co-presence gate blocks that scan (you can't
+    // read a venue you're not checked in at) and a collectionGroup('present') read
+    // matches no rule (denied). Carries NO GPS (that stays in the owner-only checkin).
     match /venue_presence/{venueId}/present/{uid} {
-      allow read: if isActiveActor();
+      allow read: if isActiveActor()
+        && exists(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId));
       allow create, update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && uid == request.auth.uid

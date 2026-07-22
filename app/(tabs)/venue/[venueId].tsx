@@ -8,6 +8,7 @@ import { NavSwipesIcon } from '../../../src/components/ui/SvgIcons';
 import {
   subscribeVenueActiveCounts,
   getVenuePresentUserIds,
+  getCurrentUserCheckIn,
 } from '../../../src/services/checkin';
 import { getVenueRegisteredUserIds } from '../../../src/services/events';
 import { getUserProfile, UserProfile } from '../../../src/services/users';
@@ -47,6 +48,7 @@ export default function VenueDetailScreen() {
 
   const [presentCount, setPresentCount] = useState(0);
   const [selfPresent, setSelfPresent] = useState(false);
+  const [checkedInHere, setCheckedInHere] = useState(false);
   const [presentUsers, setPresentUsers] = useState<UserProfile[]>([]);
   const [registeredUsers, setRegisteredUsers] = useState<UserProfile[]>([]);
   const [matchCount, setMatchCount] = useState(0);
@@ -74,12 +76,19 @@ export default function VenueDetailScreen() {
       let cancelled = false;
       (async () => {
         try {
+          // You may see WHO is present only if you are checked in HERE (co-presence
+          // gate — the rules deny the present-list read otherwise, which also blocks
+          // remote stalking). The count + registered list stay public.
+          const myCheckin = await getCurrentUserCheckIn().catch(() => null);
+          if (cancelled) return;
+          const here = !!myCheckin && myCheckin.venueId === venueId;
+          setCheckedInHere(here);
+          setSelfPresent(here);
           const [presentIds, registeredIds] = await Promise.all([
-            getVenuePresentUserIds(venueId),
+            here ? getVenuePresentUserIds(venueId) : Promise.resolve([] as string[]),
             getVenueRegisteredUserIds(venueId),
           ]);
           if (cancelled) return;
-          setSelfPresent(!!user && presentIds.includes(user.uid));
           const selfExcluded = (ids: string[]) => ids.filter(id => id !== user?.uid);
           const [present, registered] = await Promise.all([
             fetchProfiles(selfExcluded(presentIds)),
@@ -131,7 +140,11 @@ export default function VenueDetailScreen() {
         ) : (
           <>
             <Text style={styles.sectionTitle}>מי כאן עכשיו</Text>
-            <UserGrid users={presentUsers} onPress={openUser} emptyText="אף אחד לא סימן נוכחות כאן כרגע" />
+            {checkedInHere ? (
+              <UserGrid users={presentUsers} onPress={openUser} emptyText="אף אחד אחר לא סימן נוכחות כאן כרגע" />
+            ) : (
+              <Text style={styles.emptyText}>סמן נוכחות (״אני כאן״) כדי לראות מי נמצא כאן עכשיו</Text>
+            )}
 
             <Text style={styles.sectionTitle}>רשומים לאירועים כאן</Text>
             <UserGrid users={registeredUsers} onPress={openUser} emptyText="אין רשומים לאירועים כאן" />
