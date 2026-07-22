@@ -32,9 +32,21 @@ export default function PhotosScreen() {
 
   const [photos, setPhotos] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  // Surface the "at least 2 photos" requirement instead of silently doing nothing
+  // when the user taps Continue with too few photos.
+  const [photoError, setPhotoError] = useState(false);
+
+  const handlePhotosChange = useCallback((next: string[]) => {
+    setPhotos(next);
+    if (next.length >= MIN_PHOTOS) setPhotoError(false);
+  }, []);
 
   const handleContinue = useCallback(async () => {
-    if (photos.length < MIN_PHOTOS || !user || loading) return;
+    if (!user || loading) return;
+    if (photos.length < MIN_PHOTOS) {
+      setPhotoError(true);
+      return;
+    }
 
     // The main photo (index 0) must contain a face. Re-check here in case the
     // original main photo was removed and another shifted into slot 0.
@@ -101,11 +113,17 @@ export default function PhotosScreen() {
         <View style={styles.gridContainer}>
           <PhotoGrid
             photos={photos}
-            onPhotosChange={setPhotos}
+            onPhotosChange={handlePhotosChange}
             validatePhoto={validatePhoto}
             validatingLabel={he.onboarding.photos.faceChecking}
           />
         </View>
+
+        {photos.length < MIN_PHOTOS && (
+          <Text style={[styles.photoHint, photoError && styles.photoHintError]}>
+            יש להעלות לפחות {MIN_PHOTOS} תמונות כדי להמשיך ({photos.length}/{MIN_PHOTOS})
+          </Text>
+        )}
       </View>
 
       <View style={styles.buttonContainer}>
@@ -142,6 +160,16 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     marginTop: 32,
+  },
+  photoHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'right',
+    marginTop: 16,
+  },
+  photoHintError: {
+    color: colors.primary,
+    fontFamily: 'Rubik_600SemiBold',
   },
   buttonContainer: {
     paddingHorizontal: 16,

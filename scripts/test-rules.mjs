@@ -117,13 +117,13 @@ await no('checkin update cannot change gender', updateDoc(doc(A, 'checkins/A_v1'
 // document-access limit.
 const mkSw = writeBatch(A);
 mkSw.set(doc(A, 'checkins/A_vSA'), { userId:'A', venueId:'vSA', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ENTSA' });
-mkSw.set(doc(A, 'venue_presence_entries/ENTSA'), { venueId:'vSA', gender:'male', expiresAt: inMs(4*3600*1000) });
+mkSw.set(doc(A, 'venue_presence_entries/ENTSA'), { venueId:'vSA', gender:'male', userId:'A', expiresAt: inMs(4*3600*1000) });
 await ok('switch: initial check-in at vSA', mkSw.commit());
 const sw = writeBatch(A);
 sw.delete(doc(A, 'venue_presence_entries/ENTSA'));
 sw.delete(doc(A, 'checkins/A_vSA'));
 sw.set(doc(A, 'checkins/A_vSB'), { userId:'A', venueId:'vSB', gender:'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4*3600*1000), entryId:'ENTSB' });
-sw.set(doc(A, 'venue_presence_entries/ENTSB'), { venueId:'vSB', gender:'male', expiresAt: inMs(4*3600*1000) });
+sw.set(doc(A, 'venue_presence_entries/ENTSB'), { venueId:'vSB', gender:'male', userId:'A', expiresAt: inMs(4*3600*1000) });
 await ok('switch venue in one batch (co-delete old + create new, under access limit)', sw.commit());
 
 console.log('\n[R1 fixes — swipe id binding / checkins list / profileComplete / reads+metadata]');
@@ -181,19 +181,20 @@ console.log('\n[venue_presence_entries — identity-free live counts coupled to 
 // Legit check-in: private check-in + public entry (referencing it) in one batch.
 const ci = writeBatch(A);
 ci.set(doc(A, 'checkins/A_vP'), { userId: 'A', venueId: 'vP', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT1' });
-ci.set(doc(A, 'venue_presence_entries/ENT1'), { venueId: 'vP', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) });
+ci.set(doc(A, 'venue_presence_entries/ENT1'), { venueId: 'vP', gender: 'male', userId: 'A', expiresAt: inMs(4 * 3600 * 1000) });
 await ok('check-in creates coupled presence entry', ci.commit());
 // Forge a presence entry with no matching check-in.
-await no('presence entry without matching check-in denied', setDoc(doc(A, 'venue_presence_entries/FORGE'), { venueId: 'vQ', gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
+await no('presence entry without matching check-in denied', setDoc(doc(A, 'venue_presence_entries/FORGE'), { venueId: 'vQ', gender: 'male', userId: 'A', expiresAt: inMs(4 * 3600 * 1000) }));
 // Gender must match the check-in it is coupled to.
 const gm = writeBatch(A);
 gm.set(doc(A, 'checkins/A_vR'), { userId: 'A', venueId: 'vR', gender: 'male', ...AT, timestamp: serverTimestamp(), expiresAt: inMs(4 * 3600 * 1000), entryId: 'ENT2' });
-gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female', expiresAt: inMs(4 * 3600 * 1000) });
+gm.set(doc(A, 'venue_presence_entries/ENT2'), { venueId: 'vR', gender: 'female', userId: 'A', expiresAt: inMs(4 * 3600 * 1000) });
 await no('presence entry gender mismatch denied', gm.commit());
 // Anyone may LIST entries to count — but they carry no userId, so no enumeration.
 await ok('list presence entries by venue (aggregate only)', getDocs(query(collection(B, 'venue_presence_entries'), where('venueId', '==', 'vP'))));
 // The coupled owner may refresh expiresAt (re-check-in reuses the entry).
 await ok('coupled owner refreshes entry expiresAt', updateDoc(doc(A, 'venue_presence_entries/ENT1'), { expiresAt: inMs(4 * 3600 * 1000) }));
+await no('presence entry userId cannot be reassigned to another user', updateDoc(doc(A, 'venue_presence_entries/ENT1'), { userId: 'B', expiresAt: inMs(4 * 3600 * 1000) }));
 await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));
 // Can't delete a check-in while orphaning its entry (blocks churn self-inflation)...
 await no('delete checkin leaving entry orphaned denied', deleteDoc(doc(A, 'checkins/A_vP')));

@@ -37,6 +37,15 @@ export function NavMapIcon({ size = 28, color = '#FF7043' }: IconProps) {
   );
 }
 
+export function NavHomeIcon({ size = 28, color = '#9C9B99' }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 28 28" fill="none">
+      <Path d="M4.66667 12.8333L14 4.66667L23.3333 12.8333V22.1667C23.3333 22.7855 23.0875 23.379 22.6499 23.8166C22.2123 24.2542 21.6188 24.5 21 24.5H7C6.38116 24.5 5.78767 24.2542 5.35008 23.8166C4.9125 23.379 4.66667 22.7855 4.66667 22.1667V12.8333Z" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M10.5 24.5V14H17.5V24.5" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 export function NavProfileIcon({ size = 28, color = '#9C9B99' }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 28 28" fill="none">

@@ -92,6 +92,23 @@ export async function getEventsByCreator(creatorUid: string): Promise<AppEvent[]
   return snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as AppEvent[];
 }
 
+// The distinct userIds registered to a venue's UPCOMING events. The venueId of an
+// event equals the owning business's uid. Queried by venueId only (no composite
+// index needed) and filtered to upcoming events client-side.
+export async function getVenueRegisteredUserIds(venueId: string): Promise<string[]> {
+  const eventsRef = collection(db, 'events');
+  const snap = await getDocs(query(eventsRef, where('venueId', '==', venueId)));
+  const now = Date.now();
+  const ids = new Set<string>();
+  for (const d of snap.docs) {
+    const ev = d.data() as { attendeeIds?: string[]; dateTime?: { toDate?: () => Date } };
+    const when = ev.dateTime?.toDate?.()?.getTime?.();
+    if (when == null || when < now) continue;
+    for (const id of ev.attendeeIds ?? []) ids.add(id);
+  }
+  return Array.from(ids);
+}
+
 export async function getEvent(eventId: string): Promise<AppEvent | null> {
   const eventDoc = await getDoc(doc(db, 'events', eventId));
   if (eventDoc.exists()) {

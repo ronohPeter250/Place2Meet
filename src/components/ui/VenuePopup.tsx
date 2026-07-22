@@ -8,8 +8,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Button } from './Button';
 import { GenderMaleSmallIcon, GenderFemaleSmallIcon, GenderOtherSmallIcon } from './SvgIcons';
+import { useRouter } from 'expo-router';
 import { Venue } from '../../services/venues';
-import { getVenueActiveCounts } from '../../services/checkin';
+import { subscribeVenueActiveCounts } from '../../services/checkin';
 import { darkMapStyle } from '../../constants/mapStyle';
 import { colors, typography, borderRadius } from '../../theme';
 import { he } from '../../i18n/he';
@@ -32,22 +33,15 @@ export const VenuePopup = React.memo(function VenuePopup({
   onCheckIn,
 }: VenuePopupProps) {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [liveCounts, setLiveCounts] = useState<{ male: number; female: number; other: number } | null>(null);
 
-  // Live per-gender counts from the identity-free presence entries — this reveals
-  // only aggregate numbers, never who is present.
+  // LIVE per-gender presence counts — subscribes while the popup is open so the
+  // number moves as people check in/out, instead of a stale one-shot read on open.
   useEffect(() => {
     if (!venue?.id || !visible) { setLiveCounts(null); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const c = await getVenueActiveCounts(venue.id);
-        if (!cancelled) setLiveCounts(c);
-      } catch (err) {
-        console.error('[VenuePopup] active counts failed:', err);
-      }
-    })();
-    return () => { cancelled = true; };
+    const unsub = subscribeVenueActiveCounts(venue.id, setLiveCounts);
+    return () => unsub();
   }, [venue?.id, visible]);
 
   const handleCheckIn = useCallback(() => {
@@ -185,7 +179,12 @@ export const VenuePopup = React.memo(function VenuePopup({
                 />
                 <Button
                   title={he.map.businessPage}
-                  onPress={onClose}
+                  onPress={() => {
+                    const id = venue.id;
+                    const nm = venue.name;
+                    onClose();
+                    router.push({ pathname: '/(tabs)/venue/[venueId]', params: { venueId: id, name: nm } });
+                  }}
                   variant="outline"
                   style={styles.button}
                 />

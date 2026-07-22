@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Tabs, useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { CustomTabBar } from '../../src/components/ui/CustomTabBar';
-import { NavProfileIcon, NavChatIcon, NavMapIcon, NavSwipesIcon, NavEventsIcon } from '../../src/components/ui/SvgIcons';
+import { NavProfileIcon, NavChatIcon, NavHomeIcon, NavSwipesIcon, NavEventsIcon } from '../../src/components/ui/SvgIcons';
 
 export default function TabsLayout() {
   const { user, userType, isLoading } = useAuth();
@@ -55,7 +55,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="map"
         options={{
-          tabBarIcon: ({ color }) => <NavMapIcon color={color} />,
+          tabBarIcon: ({ color }) => <NavHomeIcon color={color} />,
         }}
       />
 
@@ -63,6 +63,8 @@ export default function TabsLayout() {
       <Tabs.Screen name="profile/edit" options={{ href: null }} />
       <Tabs.Screen name="profile/view" options={{ href: null }} />
       <Tabs.Screen name="chat/[chatId]" options={{ href: null }} />
+      <Tabs.Screen name="venue/[venueId]" options={{ href: null }} />
+      <Tabs.Screen name="user/[userId]" options={{ href: null }} />
     </Tabs>
   );
 }

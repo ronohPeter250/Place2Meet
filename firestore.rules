@@ -289,16 +289,21 @@ service cloud.firestore {
             || getAfter(/databases/$(database)/documents/venue_presence_entries/$(resource.data.entryId)) == null);
     }
 
-    // Identity-free presence tally. Each doc is { venueId, gender, expiresAt } with
-    // NO userId, so any active user may LIST them to count per-gender presence at a
-    // venue — but cannot learn WHO is there. Integrity is enforced by coupling each
-    // entry to the caller's own check-in (checkins/{uid}_{venueId}) that references
-    // it: an entry can only be created/deleted alongside that check-in.
+    // Venue presence entry: { venueId, gender, userId, expiresAt }. By product
+    // decision this is NO LONGER anonymous — an active user may LIST a venue's
+    // entries to see who is checked in there right now (this is a discovery app;
+    // checking in is opting in to being seen at that venue). It intentionally does
+    // NOT carry the user's exact GPS — that stays in the owner-only checkins doc —
+    // so it reveals venue-level presence, not precise coordinates, and since a user
+    // holds only one check-in at a time it exposes only their current venue.
+    // Integrity is enforced by coupling each entry to the caller's own check-in
+    // (checkins/{uid}_{venueId}): an entry can only be created/deleted alongside it.
     match /venue_presence_entries/{entryId} {
       allow read: if isActiveActor();
       allow create: if request.auth != null
         && isActiveUser(request.auth.uid)
-        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
+        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'userId', 'expiresAt'])
+        && request.resource.data.userId == request.auth.uid
         && request.resource.data.gender in ['male', 'female', 'other']
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
@@ -310,7 +315,8 @@ service cloud.firestore {
       allow update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + resource.data.venueId)).data.entryId == entryId
-        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'expiresAt'])
+        && request.resource.data.keys().hasOnly(['venueId', 'gender', 'userId', 'expiresAt'])
+        && request.resource.data.userId == request.auth.uid
         && request.resource.data.venueId == resource.data.venueId
         && request.resource.data.gender == resource.data.gender
         && request.resource.data.expiresAt is timestamp

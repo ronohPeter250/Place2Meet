@@ -23,9 +23,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FilterModal, FilterValues } from '../../src/components/ui/FilterModal';
 import { VenuePopup } from '../../src/components/ui/VenuePopup';
 import { useLocation } from '../../src/hooks/useLocation';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { getAllMapVenues, Venue } from '../../src/services/venues';
-import { checkInToVenue } from '../../src/services/checkin';
-import { subscribeVenueRegistrationCounts } from '../../src/services/events';
+import { checkInToVenue, subscribeAllActiveCheckinCounts } from '../../src/services/checkin';
 import { updateUserLocation, getUserProfile } from '../../src/services/users';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { LocationPinIcon, FilterIcon } from '../../src/components/ui/SvgIcons';
@@ -231,6 +231,13 @@ export default function MapScreen() {
   const [myPhoto, setMyPhoto] = useState<string | undefined>(undefined);
   const [venuePng, setVenuePng] = useState<Map<string, string>>(new Map());
   const [userPng, setUserPng] = useState<string | undefined>(undefined);
+  // Bumped on every tab focus and woven into the marker keys, so returning to the
+  // Map tab REMOUNTS the native markers. react-native-screens detaches the MapView
+  // on blur (dropping marker rasterisation) and tracksViewChanges={false} means the
+  // markers won't repaint on their own — remounting forces the PNG icons to paint
+  // again, fixing the "venue photos + my location marker vanish after leaving and
+  // coming back" bug.
+  const [focusEpoch, setFocusEpoch] = useState(0);
   // Dimension nudge: toggling the map height by 1px forces a native re-layout
   // that re-rasterises markers, WITHOUT reloading tiles (unlike a full remount).
   const [nudge, setNudge] = useState(0);
@@ -259,6 +266,15 @@ export default function MapScreen() {
       debugLog('MAP', 'nudge end', { why });
     }, 120);
   }, []);
+
+  // On every focus (returning to the Map tab), remount markers (focusEpoch feeds
+  // their keys) and nudge the map so the pre-rendered marker PNGs re-rasterise.
+  useFocusEffect(
+    useCallback(() => {
+      setFocusEpoch(e => e + 1);
+      doNudge('focus');
+    }, [doNudge]),
+  );
 
   const onVenueCaptured = useCallback((id: string, uri: string) => {
     debugLog('MAP', 'onVenueCaptured -> state', { id });
@@ -292,16 +308,15 @@ export default function MapScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  // Subscribe to LIVE registration counts. Fires immediately and again on every
-  // change, so the marker badge updates without a tab-switch (fixes the
-  // "shows 0 until you leave and come back" bug). Gated on auth — the events
-  // read requires a signed-in user, and we must re-subscribe across auth
-  // changes and tear down on sign-out (consistent with the other effects).
+  // Subscribe to LIVE check-in PRESENCE counts (how many people are AT each venue
+  // right now). Fires immediately and again on every check-in/-out, so the marker
+  // badge moves the moment someone taps "אני במקום". Previously the marker was wired
+  // to event REGISTRATIONS, so marking presence never changed the number.
   useEffect(() => {
     if (!user) return;
-    debugLog('MAP', 'subscribe venue counts');
-    const unsub = subscribeVenueRegistrationCounts((counts) => {
-      debugLog('MAP', 'venue counts update', { entries: counts.size });
+    debugLog('MAP', 'subscribe venue presence counts');
+    const unsub = subscribeAllActiveCheckinCounts((counts) => {
+      debugLog('MAP', 'venue presence update', { entries: counts.size });
       setCheckinCounts(counts);
     });
     return () => unsub();
@@ -464,7 +479,7 @@ export default function MapScreen() {
             The native pin always renders. */}
         {userPng ? (
           <Marker
-            key={`user_${userPng}`}
+            key={`user_${userPng}_${focusEpoch}`}
             coordinate={{ latitude, longitude }}
             anchor={{ x: 0.5, y: 0.5 }}
             zIndex={1000}
@@ -473,7 +488,7 @@ export default function MapScreen() {
           />
         ) : (
           <Marker
-            key="user_fallback"
+            key={`user_fallback_${focusEpoch}`}
             coordinate={{ latitude, longitude }}
             zIndex={1000}
             pinColor={colors.primary}
@@ -485,7 +500,7 @@ export default function MapScreen() {
           if (!png) { debugLog('MAP', 'venue marker SKIP (no png)', { id: venue.id }); return null; }
           return (
             <Marker
-              key={`${venue.id}_${png}`}
+              key={`${venue.id}_${png}_${focusEpoch}`}
               coordinate={{ latitude: venue.location.latitude, longitude: venue.location.longitude }}
               onPress={() => handleMarkerPress(venue)}
               anchor={{ x: 0.5, y: 1 }}

@@ -41,6 +41,7 @@ export function useLocation() {
 
   useEffect(() => {
     let cancelled = false;
+    let sub: Location.LocationSubscription | null = null;
 
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -58,29 +59,53 @@ export function useLocation() {
 
       setState(prev => ({ ...prev, granted: true }));
 
+      // Fast initial fix so the map centres immediately...
       try {
-        const location = await Location.getCurrentPositionAsync({
+        const initial = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
         if (cancelled) return;
         setState(prev => ({
           ...prev,
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude,
+          latitude: initial.coords.latitude,
+          longitude: initial.coords.longitude,
           loading: false,
           error: null,
         }));
       } catch {
-        if (cancelled) return;
-        setState(prev => ({
-          ...prev,
-          loading: false,
-          error: 'לא ניתן לקבל מיקום',
-        }));
+        if (!cancelled) {
+          setState(prev => ({ ...prev, loading: false, error: 'לא ניתן לקבל מיקום' }));
+        }
+      }
+
+      // ...then FOLLOW the user live (Waze-style) so the marker moves with them
+      // instead of freezing at the first fix. Updates on ~10m movement / 4s.
+      try {
+        sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.Balanced, timeInterval: 4000, distanceInterval: 10 },
+          (loc) => {
+            if (cancelled) return;
+            setState(prev => ({
+              ...prev,
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              loading: false,
+              error: null,
+              granted: true,
+            }));
+          },
+        );
+        // If the component unmounted while awaiting the subscription, drop it now.
+        if (cancelled && sub) { sub.remove(); sub = null; }
+      } catch {
+        // watch unavailable — the one-shot fix above still stands.
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (sub) sub.remove();
+    };
   }, []);
 
   return { ...state, refreshLocation };
