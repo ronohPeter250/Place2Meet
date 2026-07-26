@@ -46,19 +46,36 @@ export default function VenueDetailScreen() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const [presentCount, setPresentCount] = useState(0);
-  const [selfPresent, setSelfPresent] = useState(false);
-  const [checkedInHere, setCheckedInHere] = useState(false);
-  const [presentUsers, setPresentUsers] = useState<UserProfile[]>([]);
-  const [registeredUsers, setRegisteredUsers] = useState<UserProfile[]>([]);
+  const [presence, setPresence] = useState<{ venueId: string; count: number } | null>(null);
   const [matchCount, setMatchCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [loaded, setLoaded] = useState<{
+    venueId: string;
+    checkedInHere: boolean;
+    presentUsers: UserProfile[];
+    registeredCount: number;
+    error: boolean;
+  } | null>(null);
+
+  // This screen is a bottom-TAB route (app/(tabs)/_layout.tsx registers it as a
+  // Tabs.Screen with href:null) and expo-router downgrades push() to NAVIGATE for a
+  // non-stack target, so tapping a second venue REUSES this instance with new params
+  // instead of remounting. Everything venue-specific is therefore keyed to the venue
+  // it was loaded for and goes stale in the SAME render — otherwise venue B's page
+  // would assert that the people standing in venue A are here now.
+  const current = loaded && loaded.venueId === venueId ? loaded : null;
+  const loading = current === null;
+  const error = current?.error ?? false;
+  const checkedInHere = current?.checkedInHere ?? false;
+  const presentUsers = current?.presentUsers ?? [];
+  const registeredCount = current?.registeredCount ?? 0;
+  const presentCount = presence && presence.venueId === venueId ? presence.count : 0;
+  const selfPresent = checkedInHere;
 
   // Live "who's here now" count.
   useEffect(() => {
     if (!venueId) return;
-    const unsub = subscribeVenueActiveCounts(venueId, (c) => setPresentCount(c.male + c.female + c.other));
+    const unsub = subscribeVenueActiveCounts(venueId, (c) =>
+      setPresence({ venueId, count: c.male + c.female + c.other }));
     return () => unsub();
   }, [venueId]);
 
@@ -77,34 +94,34 @@ export default function VenueDetailScreen() {
       (async () => {
         try {
           // You may see WHO is present only if you are checked in HERE (co-presence
-          // gate — the rules deny the present-list read otherwise, which also blocks
-          // remote stalking). The count + registered list stay public.
+          // gate — the rules deny the present-list read otherwise).
           const myCheckin = await getCurrentUserCheckIn().catch(() => null);
           if (cancelled) return;
           const here = !!myCheckin && myCheckin.venueId === venueId;
-          setCheckedInHere(here);
-          setSelfPresent(here);
           const [presentIds, registeredIds] = await Promise.all([
             here ? getVenuePresentUserIds(venueId) : Promise.resolve([] as string[]),
             getVenueRegisteredUserIds(venueId),
           ]);
           if (cancelled) return;
           const selfExcluded = (ids: string[]) => ids.filter(id => id !== user?.uid);
-          const [present, registered] = await Promise.all([
-            fetchProfiles(selfExcluded(presentIds)),
-            fetchProfiles(selfExcluded(registeredIds)),
-          ]);
+          const present = await fetchProfiles(selfExcluded(presentIds));
           if (cancelled) return;
-          setPresentUsers(present);
-          // Don't list a registered user twice if they're also present.
-          const presentSet = new Set(present.map(p => p.uid));
-          setRegisteredUsers(registered.filter(r => !presentSet.has(r.uid)));
-          setError(false);
+          // Registered-for-events is surfaced as a COUNT ONLY, never as identities:
+          // naming them would disclose where a specific person WILL be and when —
+          // a predictive location leak that needs no check-in and no proximity claim,
+          // which is strictly worse than the present-list this screen gates.
+          setLoaded({
+            venueId,
+            checkedInHere: here,
+            presentUsers: present,
+            registeredCount: selfExcluded(registeredIds).length,
+            error: false,
+          });
         } catch (err) {
           console.error('[VenueDetailScreen] load failed:', err);
-          if (!cancelled) setError(true);
-        } finally {
-          if (!cancelled) setLoading(false);
+          if (!cancelled) {
+            setLoaded({ venueId, checkedInHere: false, presentUsers: [], registeredCount: 0, error: true });
+          }
         }
       })();
       return () => { cancelled = true; };
@@ -130,8 +147,20 @@ export default function VenueDetailScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Count excludes you, to match the grids below (which show OTHERS to tap). */}
-        <Text style={styles.presentCount}>{Math.max(0, presentCount - (selfPresent ? 1 : 0))} נמצאים כאן עכשיו</Text>
+        {/* Count excludes you, to match the grid below (which shows OTHERS to tap).
+            Requires BOTH the live count for THIS venue AND a SUCCESSFUL `current`
+            (which carries checkedInHere): the count arrives in one snapshot while
+            checkedInHere costs several round-trips, so rendering on `presence` alone
+            would count YOU as a stranger and state one person too many, then silently
+            decrement. On the error path checkedInHere is forced false and is therefore
+            not trustworthy either — so the count is withheld rather than overstated.
+            Without this, switching venues would also assert "0 נמצאים כאן עכשיו"
+            about a venue nothing is yet known about. */}
+        {presence && presence.venueId === venueId && current && !current.error && (
+          <Text style={styles.presentCount}>
+            {Math.max(0, presentCount - (selfPresent ? 1 : 0))} נמצאים כאן עכשיו
+          </Text>
+        )}
 
         {loading ? (
           <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
@@ -147,7 +176,9 @@ export default function VenueDetailScreen() {
             )}
 
             <Text style={styles.sectionTitle}>רשומים לאירועים כאן</Text>
-            <UserGrid users={registeredUsers} onPress={openUser} emptyText="אין רשומים לאירועים כאן" />
+            <Text style={registeredCount > 0 ? styles.registeredCount : styles.emptyText}>
+              {registeredCount > 0 ? `${registeredCount} רשומים` : 'אין רשומים לאירועים כאן'}
+            </Text>
           </>
         )}
       </ScrollView>
@@ -164,6 +195,7 @@ const styles = StyleSheet.create({
   matchesBadge: { position: 'absolute', top: 2, left: 2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   matchesBadgeText: { color: colors.white, fontFamily: 'Rubik_700Bold', fontSize: 11 },
   presentCount: { ...typography.body, color: colors.primary, textAlign: 'right', marginTop: 8, fontFamily: 'Rubik_600SemiBold' },
+  registeredCount: { ...typography.body, color: colors.text, textAlign: 'right', fontFamily: 'Rubik_600SemiBold' },
   sectionTitle: { ...typography.captionBold, color: colors.textSecondary, textAlign: 'right', marginTop: 28, marginBottom: 12 },
   grid: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 12 },
   userCard: { width: AVATAR, alignItems: 'center' },

@@ -271,8 +271,16 @@ await no('chat create with non-canonical id denied (anti-flood)', setDoc(doc(A, 
 console.log('\n[R16 fix — read rules tolerate a NON-EXISTENT doc (transaction pre-reads)]');
 // createChatForMatch / registerForEvent tx.get() a not-yet-existing doc; the read
 // rule must return not-found, not error on resource.data and deny the whole tx.
-await ok('get non-existent chat returns not-found (null-resource guard)', getDoc(doc(A, 'chats/ZZZ_NONE')));
+// ...but ONLY for ids the caller is a party to. An unconditional null-exemption is an
+// existence oracle: not-found vs permission-denied would reveal, for ANY guessable id,
+// whether two other people are matched / have swiped / are registered.
+await ok('get non-existent chat of your own returns not-found (null-resource guard)', getDoc(doc(A, 'chats/A_ZZZ')));
+await no('get non-existent chat between two OTHERS denied (no match oracle)', getDoc(doc(A, 'chats/ZZZ_NONE')));
 await ok('get non-existent registration returns not-found', getDoc(doc(A, 'registrations/A_NONE')));
+await no('get non-existent registration of ANOTHER user denied (no registration oracle)', getDoc(doc(A, 'registrations/ZZZ_NONE')));
+await ok('get non-existent OUTGOING swipe returns not-found', getDoc(doc(A, 'swipes/A_ZZZ')));
+await ok('get non-existent REVERSE swipe returns not-found (match detection)', getDoc(doc(A, 'swipes/ZZZ_A')));
+await no('get non-existent swipe between two OTHERS denied (no swipe-graph oracle)', getDoc(doc(A, 'swipes/ZZZ_YYY')));
 await no('get non-existent checkin denied (no existence oracle for stalking)', getDoc(doc(A, 'checkins/A_NONE')));
 
 console.log('\n[message length — does rule size() count chars or bytes?]');

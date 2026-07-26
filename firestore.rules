@@ -326,23 +326,48 @@ service cloud.firestore {
     }
 
     // Venue-scoped PRESENCE IDENTITY: venue_presence/{venueId}/present/{uid} =
-    // { gender, expiresAt } (doc id = uid). Reveals who is checked in at a venue, but
-    // READ is gated on the reader being CHECKED IN AT THE SAME VENUE — you can see
-    // who else is here only when you are actually here. This is the real anti-stalking
-    // control: a per-venue subcollection alone does NOT stop enumeration (venue ids
-    // are listable, so a raw client could otherwise scan every venue to track a person
-    // or dump all present users). The co-presence gate blocks that scan (you can't
-    // read a venue you're not checked in at) and a collectionGroup('present') read
-    // matches no rule (denied). Carries NO GPS (that stays in the owner-only checkin).
+    // { gender, expiresAt } (doc id = uid). Reveals who is checked in at a venue.
+    // READ is gated on the reader being CHECKED IN AT THE SAME VENUE, and a
+    // collectionGroup('present') read matches no rule (denied). Carries NO GPS (that
+    // stays in the checkin doc, which is readable by its owner, the venue business and
+    // admins — not "owner-only", and the venue business can therefore see the exact
+    // coordinates its own visitors checked in from).
+    //
+    // Do NOT read the co-presence gate as an anti-stalking control — it stops the
+    // HONEST client only. Because a check-in is self-mintable from anywhere and is not
+    // limited in number, a raw client can still scan every venue and enumerate present
+    // users. See the ACCEPTED RISK note on the read rule below for the full attack and
+    // why it is knowingly not closed here.
     match /venue_presence/{venueId}/present/{uid} {
       // Read requires a LIVE (non-expired) check-in of the reader at this venue, so
       // access lapses with the presence window (a lingering set-and-forget check-in
-      // can't grant permanent read access). RESIDUAL, documented honestly: check-in
-      // proximity is client-attested (GPS is client-supplied and spoofable — see
-      // checkinNearVenue), so a determined raw client could still mint a check-in at
-      // a venue to read its present list. Closing that fully needs server-side
-      // location attestation (Cloud Function / device integrity), which this
-      // client-only app does not have — tracked as deferred.
+      // can't grant permanent read access).
+      //
+      // ACCEPTED RISK — do not read the above as a security boundary. Stated at full
+      // strength, because an earlier version of this comment understated it: check-in
+      // proximity is client-attested (checkinNearVenue validates client-supplied
+      // lat/lng), /venues and /businesses are listable, and NOTHING here limits how
+      // many venues one user may be checked in at simultaneously. A raw client can
+      // therefore script: read every venue's GeoPoint -> create checkins/{uid}_{venue}
+      // for EVERY venue echoing those coordinates -> read every venue's present list.
+      // It is also traceless: `create` only requires that the entryId does not already
+      // exist, never that the presence entry is actually created, so the attacker
+      // never appears in any public count. Refreshing expiresAt (allow update below)
+      // re-validates no position, so the whole map is held open indefinitely from
+      // anywhere. Net effect: any authenticated user can obtain a live uid -> venue
+      // feed for the entire checked-in user base — a mass-location primitive on a
+      // dating app, not merely "someone could fake being at one bar".
+      //
+      // This is a KNOWN, OWNER-ACCEPTED limitation of a client-only architecture
+      // (decision: 2026-07-23). Closing it requires server-side location attestation
+      // (Cloud Function / device integrity) — deferred, not solved.
+      //
+      // NOTE on partial hardening, if this is ever revisited: requiring the check-in to
+      // co-create its presence entry (getAfter(...) != null) is NOT sufficient on its
+      // own. The venue_presence_entries delete rule lets the owner drop the entry
+      // immediately afterwards while keeping the check-in, so the stealth returns in
+      // two writes instead of one. Any real fix has to keep the check-in and its entry
+      // coupled for the check-in's whole lifetime, not just at creation.
       allow read: if isActiveActor()
         && exists(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId))
         && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId)).data.expiresAt > request.time;
@@ -360,10 +385,19 @@ service cloud.firestore {
     }
 
     match /swipes/{swipeId} {
+      // The not-found path is needed by the honest client (checkForMatch reads the
+      // possibly-absent reverse swipe), but it must NOT be an unconditional exemption:
+      // that would distinguish not-found from permission-denied for ANY id, turning
+      // getDoc('A_B') into an oracle for "did A swipe B" over the whole user base
+      // (ids are guessable — see the same warning on /checkins). Doc id is
+      // {fromUser}_{toUser}, so require the caller to be one of the two parties by ID
+      // before the absent doc is readable. Both honest reads qualify: own outgoing
+      // ({me}_X) and the reverse check (X_{me}).
       allow get: if isActiveActor()
         && (resource == null
-            || resource.data.fromUser == request.auth.uid
-            || resource.data.toUser == request.auth.uid);
+              ? (swipeId.matches(request.auth.uid + '_.*') || swipeId.matches('.*_' + request.auth.uid))
+              : (resource.data.fromUser == request.auth.uid
+                 || resource.data.toUser == request.auth.uid));
       // List is restricted to your OWN outgoing swipes (fromUser). Allowing a
       // toUser query would let a user enumerate everyone who liked/disliked them.
       // Checking whether a specific person swiped on you is still possible via a
@@ -393,20 +427,26 @@ service cloud.firestore {
     }
 
     match /matches/{matchId} {
-      // resource == null guard for parity with the other read rules (a read of a
-      // non-existent match returns not-found instead of erroring on resource.data).
-      allow read: if isActiveActor()
-        && (resource == null || request.auth.uid in resource.data.users);
+      // No resource == null exemption: nothing in the app reads this collection, so
+      // the not-found path is never needed by an honest client — and granting it
+      // would distinguish not-found from permission-denied, leaking whether a given
+      // match doc exists.
+      allow read: if isActiveActor() && request.auth.uid in resource.data.users;
       allow create: if false;
       allow update, delete: if false;
     }
 
     match /chats/{chatId} {
-      // resource == null guard: a transaction pre-read (tx.get) of a not-yet-
-      // existing chat — as createChatForMatch does — must return not-found, not
-      // error on resource.data and deny the whole transaction.
+      // A transaction pre-read (tx.get) of a not-yet-existing chat — as
+      // createChatForMatch does — must return not-found rather than error on
+      // resource.data and deny the whole transaction. But the exemption is scoped to
+      // the caller's own ids: chatId is the sorted participant pair, so an
+      // unconditional exemption would let anyone probe getDoc('{A}_{B}') and tell
+      // not-found from permission-denied — i.e. learn whether A and B are matched.
       allow read: if isActiveActor()
-        && (resource == null || request.auth.uid in resource.data.participants);
+        && (resource == null
+              ? (chatId.matches(request.auth.uid + '_.*') || chatId.matches('.*_' + request.auth.uid))
+              : request.auth.uid in resource.data.participants);
       // Chat creation requires a real, server-verified mutual match (both swipe
       // docs are 'like'). This closes the unsolicited-chat / spam vector where a
       // client could otherwise create a chat with anyone by listing itself.
@@ -468,6 +508,21 @@ service cloud.firestore {
     }
 
     match /events/{eventId} {
+      // ACCEPTED RISK — PREDICTIVE LOCATION DISCLOSURE (decision: 2026-07-23).
+      // An event doc carries `attendeeIds`, and this rule makes the whole doc readable
+      // by ANY active user. Firestore has no field-level read control, so a raw client
+      // can run getDocs(query(events, where('venueId','==',X))) and learn, per event,
+      // exactly WHO will be at that address and WHEN — then resolve each uid to a full
+      // profile via the users read rule. This needs no check-in, no proximity claim and
+      // no forged document, which makes it a stronger leak than the venue_presence gate
+      // documented above (that one only exposes who is somewhere NOW, and costs a write).
+      // app/(tabs)/venue/[venueId].tsx deliberately renders a COUNT ONLY, never
+      // identities — but that is a UI decision and is NOT a security boundary; the data
+      // stays readable underneath it.
+      // Closing it properly means moving attendeeIds into a subcollection with its own
+      // rules. Deferred because the field is load-bearing: src/services/events.ts
+      // (registration + venue counts) and src/services/swipes.ts (candidate-deck build)
+      // both read it, and existing events would need migrating.
       allow read: if isActiveActor();
       allow create: if request.auth != null
         && isActiveBusiness(request.auth.uid)
@@ -509,11 +564,15 @@ service cloud.firestore {
     match /registrations/{regId} {
       // Scope get to the owner/admin — otherwise any active user could read any
       // registration (userId, eventId, gender, status) by its guessable doc id.
-      // resource == null guard: registerForEvent's transaction pre-reads the
-      // (not-yet-existing) registration doc, which must return not-found rather
-      // than error and deny the whole registration.
+      // registerForEvent's transaction pre-reads the (not-yet-existing) registration
+      // doc, which must return not-found rather than error and deny the whole
+      // registration. Scoped to the caller's own ids (regId is {uid}_{eventId}): an
+      // unconditional exemption would distinguish not-found from permission-denied and
+      // so reveal whether any given user is registered for any given event.
       allow get: if isActiveActor()
-        && (resource == null || isAdmin() || resource.data.userId == request.auth.uid);
+        && (resource == null
+              ? (regId.matches(request.auth.uid + '_.*') || isAdmin())
+              : (isAdmin() || resource.data.userId == request.auth.uid));
       allow list: if isActiveActor()
         && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null

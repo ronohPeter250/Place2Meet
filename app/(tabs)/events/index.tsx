@@ -8,6 +8,7 @@ import { Button } from '../../../src/components/ui/Button';
 import { CalendarPlusIcon } from '../../../src/components/ui/SvgIcons';
 import { getEvents, registerForEvent, getMyRegisteredEventIds, AppEvent } from '../../../src/services/events';
 import { getAllMapVenues } from '../../../src/services/venues';
+import { GPS_FIX_TIMEOUT_MS } from '../../../src/hooks/useLocation';
 import { colors, typography, borderRadius } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
 
@@ -123,10 +124,20 @@ export default function EventsScreen() {
         Alert.alert('נדרשת גישה למיקום', 'אפשר גישה למיקום כדי לסנן אירועים לפי קרבה אליך.');
         return;
       }
+      // The GPS fix is bounded: getCurrentPositionAsync can hang forever on Android
+      // when no fix is obtainable, which would leave this button spinning and disabled
+      // with no way out for the rest of the session.
       const [pos, venues] = await Promise.all([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        Promise.race([
+          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), GPS_FIX_TIMEOUT_MS)),
+        ]),
         getAllMapVenues(),
       ]);
+      if (!pos) {
+        Alert.alert('שגיאה', 'לא ניתן לקבל מיקום כרגע. נסה שוב.');
+        return;
+      }
       const coords = new Map<string, Coords>();
       for (const v of venues) {
         if (v.location) {

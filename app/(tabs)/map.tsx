@@ -234,6 +234,13 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const { latitude, longitude, loading: locationLoading, error: locationError, granted } = useLocation();
 
+  // `initialRegion` is applied ONCE, at mount. When the first fix fails/times out the
+  // map mounts on useLocation's seeded default, so a real position arriving later would
+  // otherwise leave the camera parked on a city the user isn't in, with their marker
+  // (once un-suppressed) off-screen. Recenter explicitly the first time a real fix lands.
+  const mapRef = useRef<any>(null);
+  const recenteredRef = useRef(false);
+
   const [venues, setVenues] = useState<Venue[]>([]);
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [showVenuePopup, setShowVenuePopup] = useState(false);
@@ -363,6 +370,11 @@ export default function MapScreen() {
     // throttle by distance/time so the live watch (which delivers every ~10m) does
     // NOT amplify into ~2 Firestore writes per 10m travelled. The visual marker
     // still follows every update — this bounds writes, not the display.
+    // `focusEpoch` is a dependency (not just the ref) so that RETURNING to the tab
+    // re-runs this and persists the position we reached while blurred. Without it a
+    // fix that arrived off-tab was dropped permanently: refocus changes only a ref,
+    // so nothing re-triggered the effect and the stale coordinate stuck for the rest
+    // of the session unless the user happened to move again while focused.
     if (!focusedRef.current) return;
     const last = lastPersist.current;
     const now = Date.now();
@@ -376,7 +388,20 @@ export default function MapScreen() {
         if (lastPersist.current === attempt) lastPersist.current = last;
         debugLog('MAP', 'location update failed', { error: String(err) });
       });
-  }, [user, granted, locationError, latitude, longitude, locationLoading]);
+  }, [user, granted, locationError, latitude, longitude, locationLoading, focusEpoch]);
+
+  // First REAL fix after the map already mounted on the seeded default: move the camera
+  // to it once. Guarded by a ref so this never fights the user's own panning afterwards.
+  useEffect(() => {
+    if (recenteredRef.current) return;
+    if (locationError || locationLoading || !granted) return;
+    if (latitude == null || longitude == null) return;
+    recenteredRef.current = true;
+    mapRef.current?.animateToRegion?.(
+      { latitude, longitude, latitudeDelta: 0.02, longitudeDelta: 0.02 },
+      500,
+    );
+  }, [latitude, longitude, locationError, locationLoading, granted]);
 
   // Whenever a new marker png arrives, nudge the map so it re-rasterises and
   // the freshly-added marker actually paints on first entry.
@@ -466,6 +491,20 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Permission granted but no usable fix (hung/failed GPS). The map still renders
+          on the default region so venues are browsable, but the user must be told their
+          own position is unknown — otherwise the default coordinate reads as "you are
+          here". The blocking error screen above only covers the permission-denied case. */}
+      {granted && !!locationError && (
+        // Positioned below BOTH the notch/status bar and the filter button (which sits
+        // at insets.top + 16, right-aligned) — a banner at a raw top offset is drawn
+        // under the system bar on notched devices, i.e. the only signal that the
+        // position is unknown would be invisible.
+        <View style={[styles.locationBanner, { top: insets.top + 76 }]} pointerEvents="none">
+          <Text style={styles.locationBannerText}>{locationError}</Text>
+        </View>
+      )}
+
       <View style={styles.offscreen} pointerEvents="none">
         {/* Key by photo so the undefined->URL transition (async profile fetch
             resolves after first render) remounts with imgReady=false and waits
@@ -478,6 +517,7 @@ export default function MapScreen() {
       </View>
 
       <MapView
+        ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={[styles.map, { marginBottom: nudge }]}
         initialRegion={{ latitude, longitude, latitudeDelta: 0.02, longitudeDelta: 0.02 }}
@@ -501,7 +541,12 @@ export default function MapScreen() {
             markers are unreliable on New-Arch Android (the whole reason markers
             are pre-rendered to PNGs), so a View fallback could itself not paint.
             The native pin always renders. */}
-        {userPng ? (
+        {/* ...but ONLY when the coordinate is a real fix. With permission granted and
+            the fix failed/timed out, latitude/longitude still hold useLocation's seeded
+            Tel Aviv default — drawing the user there would place them ~90km from where
+            they are, among real nearby-venue markers, with nothing indicating the fix
+            failed. No marker (plus the banner above) is the honest rendering. */}
+        {locationError ? null : userPng ? (
           <Marker
             key={`user_${userPng}_${focusEpoch}`}
             coordinate={{ latitude, longitude }}
@@ -557,6 +602,8 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
   map: { flex: 1 },
   errorText: { fontSize: 16, color: colors.textSecondary, textAlign: 'center', marginTop: 16 },
+  locationBanner: { position: 'absolute', left: 12, right: 80, zIndex: 50, backgroundColor: colors.surface, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  locationBannerText: { fontSize: 13, color: colors.textSecondary, textAlign: 'center' },
   filterButton: {
     position: 'absolute', right: 16, width: 48, height: 48, borderRadius: 12,
     backgroundColor: colors.surface, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',

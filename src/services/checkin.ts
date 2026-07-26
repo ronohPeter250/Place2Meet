@@ -26,9 +26,13 @@ const CHECKIN_DURATION_HOURS = 4;
 type Gender = 'male' | 'female' | 'other';
 
 // A user may only mark presence when they are physically AT the venue. Their live
-// GPS is checked against the venue's coordinates both here (honest-path UX) and in
-// the Firestore rules (the real backstop against a raw client). ~200m covers
-// typical GPS inaccuracy without letting someone check in from down the street.
+// GPS is checked against the venue's coordinates both here and in the Firestore rules.
+// ~200m covers typical GPS inaccuracy without letting someone check in from down the
+// street. NOTE: the rules check is NOT a backstop against a raw client — it validates
+// client-SUPPLIED lat/lng against the venue's public coordinates (with a wider 300m
+// radius than this one), so anyone bypassing the UI can simply echo those coordinates
+// back. Both checks constrain the honest path only; see the ACCEPTED RISK note on
+// venue_presence in firestore.rules.
 const CHECKIN_RADIUS_METERS = 200;
 
 function normalizeGender(g: unknown): Gender {
@@ -70,10 +74,14 @@ export class CheckInError extends Error {
 //  - venue_presence_entries/{autoId} (public read, IDENTITY-FREE — venueId/gender/
 //    expiresAt, NO userId): so anyone can COUNT per-gender presence per venue,
 //    globally, without being able to enumerate WHO is where.
-//  - venue_presence/{venueId}/present/{uid} (public read but VENUE-SCOPED): carries
-//    identity (doc id = uid) so the venue detail can show who's here — but because
-//    it lives under a specific venue and is not globally queryable, it can't be used
-//    to track a user across venues or dump the whole user base's whereabouts.
+//  - venue_presence/{venueId}/present/{uid} (CO-PRESENCE GATED, venue-scoped): carries
+//    identity (doc id = uid) so the venue detail can show who's here. NOT public read —
+//    unlike the entries above, the rule additionally requires the READER to hold a LIVE
+//    check-in at this same venue, so callers must keep the `checkedInHere` gate in
+//    app/(tabs)/venue/[venueId].tsx or the read is denied. That gate raises the cost of
+//    tracking but does NOT prevent it: check-ins are self-mintable and unlimited, so a
+//    raw client can hold one at every venue and read them all. Documented ACCEPTED RISK
+//    — see the note on venue_presence in firestore.rules for the full attack.
 // All are coupled by the rules to the caller's own matching check-in.
 export async function checkInToVenue(
   venueId: string,
@@ -87,7 +95,9 @@ export async function checkInToVenue(
     throw new CheckInError('LOCATION_REQUIRED');
   }
   // Proximity gate: only allow if the user's live GPS is within the radius of the
-  // venue. The Firestore rules enforce a matching bounding box as the real backstop.
+  // venue. The rules apply a wider (300m) geodesic check of their own, but over
+  // CLIENT-SUPPLIED coordinates — so it is not a backstop; see the note on
+  // CHECKIN_RADIUS_METERS above.
   const venueGeo = await getVenueGeo(venueId);
   if (!venueGeo) throw new CheckInError('VENUE_NO_LOCATION');
   if (distanceMeters(userCoords.lat, userCoords.lng, venueGeo.lat, venueGeo.lng) > CHECKIN_RADIUS_METERS) {
@@ -269,9 +279,11 @@ export function subscribeVenueActiveCounts(
 }
 
 // The distinct userIds currently present at a venue. Reads the VENUE-SCOPED
-// subcollection venue_presence/{venueId}/present/{uid} (doc id == uid) — which,
-// unlike the flat entries, is NOT globally queryable, so it can't be used to track
-// a specific user across venues or to dump the whole user base's whereabouts.
+// subcollection venue_presence/{venueId}/present/{uid} (doc id == uid). Unlike the
+// flat entries it is NOT globally queryable, which raises the cost of tracking — but
+// it does NOT prevent it: check-ins are self-mintable and uncapped, so a raw client
+// can hold one at every venue and read every present list. Documented ACCEPTED RISK;
+// see the venue_presence note in firestore.rules.
 export async function getVenuePresentUserIds(venueId: string): Promise<string[]> {
   const snap = await getDocs(query(
     collection(db, 'venue_presence', venueId, 'present'),

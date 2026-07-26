@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { SendIcon } from '../../../src/components/ui/SvgIcons';
 import { CachedImage } from '../../../src/components/ui/CachedImage';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Timestamp, doc, getDoc } from 'firebase/firestore';
 import { ScreenWrapper } from '../../../src/components/layout/ScreenWrapper';
 import { Header } from '../../../src/components/layout/Header';
@@ -28,22 +28,107 @@ function isDivider(item: ListItem): item is { id: string; type: 'divider'; label
   return 'type' in item && item.type === 'divider';
 }
 
+interface ConvoState {
+  chatId: string;
+  messages: Message[];
+  earlier: Message[];
+  hasMoreEarlier: boolean;
+  otherUserName: string;
+  otherUserPhoto?: string;
+}
+
+const EMPTY_MESSAGES: Message[] = [];
+const emptyConvo = (chatId: string): ConvoState => ({
+  chatId, messages: [], earlier: [], hasMoreEarlier: true, otherUserName: '', otherUserPhoto: undefined,
+});
+
 export default function ChatConversationScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const router = useRouter();
   const { user } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [earlierMessages, setEarlierMessages] = useState<Message[]>([]);
-  const [hasMoreEarlier, setHasMoreEarlier] = useState(true);
-  const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const [otherUserName, setOtherUserName] = useState('');
-  const [otherUserPhoto, setOtherUserPhoto] = useState<string | undefined>();
-  const [inputText, setInputText] = useState('');
-  const [sending, setSending] = useState(false);
+  // ALL conversation-scoped state is keyed to the chatId it belongs to. `chat/[chatId]`
+  // is a bottom-TAB route (app/(tabs)/_layout.tsx registers it with href:null), so
+  // expo-router downgrades push() to NAVIGATE and this screen is REUSED with new params
+  // — it is never remounted. Unkeyed, the live-tail merge below (which accumulates by
+  // id rather than replacing) folds the PREVIOUS conversation's messages into the next
+  // one: one person's private messages rendered inside a different person's chat, with
+  // the header still showing the previous person. Deriving off the key invalidates all
+  // of it in the same render as the param change.
+  const [convo, setConvo] = useState<ConvoState>(emptyConvo(''));
+
+  const current = convo.chatId === chatId ? convo : null;
+  const messages = current?.messages ?? EMPTY_MESSAGES;
+  const earlierMessages = current?.earlier ?? EMPTY_MESSAGES;
+  const hasMoreEarlier = current?.hasMoreEarlier ?? true;
+  const otherUserName = current?.otherUserName ?? '';
+  const otherUserPhoto = current?.otherUserPhoto;
+
+  // The chat currently on screen. Async callbacks capture the chatId they were started
+  // for and compare against this, so a response that arrives after the user moved on is
+  // DROPPED rather than applied.
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
+
+  // Whether the user is actually looking at this conversation. The screen stays mounted
+  // (and subscribed) after they navigate away, so anything with a side effect — read
+  // receipts in particular — must check this. focusEpoch re-runs those effects on return.
+  const focusedRef = useRef(true);
+  const [focusEpoch, setFocusEpoch] = useState(0);
+  useFocusEffect(useCallback(() => {
+    focusedRef.current = true;
+    setFocusEpoch(e => e + 1);
+    return () => { focusedRef.current = false; };
+  }, []));
+
+  // Update the state for `id` — but ONLY while `id` is still the chat on screen. A
+  // stale callback must be ignored outright: writing it (even into a fresh container
+  // for its own chat) would replace the state of the conversation now being viewed and
+  // blank it out, since the derived values above fall back to empty when the key
+  // doesn't match. Ignoring is safe — the abandoned chat re-fetches if reopened.
+  const patchConvo = useCallback((id: string, patch: (prev: ConvoState) => Partial<ConvoState>) => {
+    if (id !== chatIdRef.current) return;
+    setConvo(prev => {
+      const base = prev.chatId === id ? prev : emptyConvo(id);
+      return { ...base, ...patch(base) };
+    });
+  }, []);
+
+  // Draft text and the in-flight flags are conversation-scoped too: on this reused
+  // screen an unkeyed draft would carry a message composed for one person into someone
+  // else's conversation, where `handleSend` (which reads the CURRENT chatId) would
+  // deliver it to the wrong recipient. Same reasoning for the two busy flags — keyed so
+  // one chat's outstanding request cannot disable the other chat's controls.
+  const [draft, setDraft] = useState<{ chatId: string; text: string }>({ chatId: '', text: '' });
+  const inputText = draft.chatId === chatId ? draft.text : '';
+  const setInputText = useCallback((updater: string | ((prev: string) => string)) => {
+    const id = chatIdRef.current;
+    setDraft(prev => {
+      const prevText = prev.chatId === id ? prev.text : '';
+      return { chatId: id, text: typeof updater === 'function' ? updater(prevText) : updater };
+    });
+  }, []);
+
+  const [loadingEarlierFor, setLoadingEarlierFor] = useState<string | null>(null);
+  const loadingEarlier = loadingEarlierFor === chatId;
+  const [sendingFor, setSendingFor] = useState<string | null>(null);
+  const sending = sendingFor === chatId;
+
   const flatListRef = useRef<FlatList>(null);
   const suppressScrollRef = useRef(false);
   const atBottomRef = useRef(true);
   const lastMarkedRef = useRef<string | null>(null);
+
+  // Scroll/read-receipt refs are per-conversation too. Reset them the moment the param
+  // changes (during render, before the new chat paints) — otherwise a new chat inherits
+  // "user is scrolled up" from the previous one and opens parked at the oldest message
+  // of its window, with tail-following disabled until the user scrolls down manually.
+  const renderedChatIdRef = useRef(chatId);
+  if (renderedChatIdRef.current !== chatId) {
+    renderedChatIdRef.current = chatId;
+    atBottomRef.current = true;
+    suppressScrollRef.current = false;
+    lastMarkedRef.current = null;
+  }
 
   // Header + access guard: confirm the current user is a participant before
   // showing the conversation (rules also deny reads, but this gives real feedback
@@ -80,8 +165,10 @@ export default function ChatConversationScreen() {
             if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) a--;
             return a;
           })() : null;
-          setOtherUserName(age ? `${profile.name}, ${age}` : profile.name);
-          if (profile.photos?.[0]) setOtherUserPhoto(profile.photos[0]);
+          patchConvo(chatId, () => ({
+            otherUserName: age ? `${profile.name}, ${age}` : profile.name,
+            otherUserPhoto: profile.photos?.[0],
+          }));
         }
       } catch (err) {
         console.error('[ChatConversationScreen] header fetch failed:', err);
@@ -103,16 +190,20 @@ export default function ChatConversationScreen() {
       // in earlierMessages either — leaving a permanent hole in the scrollback.
       // Merge by id (updates read-receipts/resolved timestamps too) and keep asc
       // order; a pending (null) server timestamp sorts to the end (it's newest).
-      setMessages(prev => {
-        if (prev.length === 0) return msgs;
+      // patchConvo restarts from a blank conversation when the stored state belongs to
+      // a different chat, so `prev.messages` here is only ever THIS chat's messages.
+      patchConvo(chatId, prev => {
+        if (prev.messages.length === 0) return { messages: msgs };
         const byId = new Map<string, Message>();
-        for (const m of prev) byId.set(m.id, m);
+        for (const m of prev.messages) byId.set(m.id, m);
         for (const m of msgs) byId.set(m.id, m);
-        return Array.from(byId.values()).sort((a, b) => {
-          const ta = (a.timestamp as Timestamp)?.toMillis?.() ?? Number.MAX_SAFE_INTEGER;
-          const tb = (b.timestamp as Timestamp)?.toMillis?.() ?? Number.MAX_SAFE_INTEGER;
-          return ta - tb;
-        });
+        return {
+          messages: Array.from(byId.values()).sort((a, b) => {
+            const ta = (a.timestamp as Timestamp)?.toMillis?.() ?? Number.MAX_SAFE_INTEGER;
+            const tb = (b.timestamp as Timestamp)?.toMillis?.() ?? Number.MAX_SAFE_INTEGER;
+            return ta - tb;
+          }),
+        };
       });
       // Only follow the tail if the reader is already near the bottom — don't
       // yank them down while they're browsing older history.
@@ -133,14 +224,20 @@ export default function ChatConversationScreen() {
 
   // Mark the chat read when the newest message is an incoming (other-user) one,
   // deduped by message id so rapid deliveries don't each trigger a Firestore write.
+  // Gated on FOCUS: this screen is a tab route that stays mounted and keeps its
+  // subscription running after the user navigates away, so without the gate every
+  // message arriving while they are elsewhere would be stamped read — clearing the
+  // unread badge for messages they never saw. Re-running on focus means messages that
+  // landed while away are marked read the moment the user actually returns to them.
   useEffect(() => {
     if (!chatId || messages.length === 0) return;
+    if (!focusedRef.current) return;
     const newest = messages[messages.length - 1];
     if (newest.senderId === user?.uid) return;       // my own message needs no read stamp
     if (lastMarkedRef.current === newest.id) return;  // already marked for this message
     lastMarkedRef.current = newest.id;
     markChatRead(chatId);
-  }, [chatId, messages, user?.uid]);
+  }, [chatId, messages, user?.uid, focusEpoch]);
 
   // Merge paginated older messages with the live tail (dedup by id, older first).
   const allMessages = useMemo(() => {
@@ -163,22 +260,37 @@ export default function ChatConversationScreen() {
     const before = boundary?.timestamp as Timestamp | undefined;
     if (!before?.toMillis || !boundary?.id) return;
 
-    setLoadingEarlier(true);
+    setLoadingEarlierFor(chatId);
     try {
       const older = await fetchEarlierMessages(chatId, before, boundary.id, PAGE_SIZE);
+      // A page is only valid if it still JOINS ONTO what is displayed. Matching the
+      // chatId is not enough: leaving this chat and coming back rebuilds the container
+      // from a fresh live tail, and messages sent meanwhile land between that tail and
+      // this page — prepending it then would splice in a block that is no longer
+      // adjacent, leaving a permanent hole that further pagination only moves away
+      // from. So re-check that the boundary this page was fetched against is still the
+      // left edge of the displayed history; if not, drop the page (a later press
+      // re-fetches from the current edge).
+      const stillAdjacent = (prev: ConvoState) => (
+        prev.earlier.length > 0 ? prev.earlier[0].id === boundary.id : prev.messages[0]?.id === boundary.id
+      );
       if (older.length === 0) {
-        setHasMoreEarlier(false);
+        patchConvo(chatId, prev => (stillAdjacent(prev) ? { hasMoreEarlier: false } : {}));
       } else {
         // Keep the reader's scroll position — don't let the content-size change
-        // from prepending scroll them back to the bottom.
-        suppressScrollRef.current = true;
-        setEarlierMessages(prev => [...older, ...prev]);
-        if (older.length < PAGE_SIZE) setHasMoreEarlier(false);
+        // from prepending scroll them back to the bottom. Id-guarded like every other
+        // write here: if the user switched chats while this page was in flight, setting
+        // the flag would re-dirty it after the param-change reset and make the NEW
+        // conversation open parked at its oldest message.
+        if (chatIdRef.current === chatId) suppressScrollRef.current = true;
+        patchConvo(chatId, prev => (stillAdjacent(prev)
+          ? { earlier: [...older, ...prev.earlier], hasMoreEarlier: older.length >= PAGE_SIZE }
+          : {}));
       }
     } catch (err) {
       console.error('[ChatConversationScreen] load earlier failed:', err);
     } finally {
-      setLoadingEarlier(false);
+      setLoadingEarlierFor(prev => (prev === chatId ? null : prev));
     }
   }, [chatId, loadingEarlier, hasMoreEarlier, earlierMessages, messages]);
 
@@ -212,20 +324,30 @@ export default function ChatConversationScreen() {
     // Sending your own message should always scroll you to it.
     atBottomRef.current = true;
     const text = inputText.trim();
+    const target = chatId;  // the conversation this text was written for
     setInputText('');
-    setSending(true);
+    setSendingFor(target);
 
     try {
-      await sendMessage(chatId, text);
+      await sendMessage(target, text);
     } catch (err) {
       console.error('[ChatConversationScreen] send message failed:', err);
-      // Restore the text only if the user hasn't started typing something new.
-      setInputText(prev => (prev.length === 0 ? text : prev));
+      // Restore the text only if the user hasn't started typing something new — and
+      // only while still in the same conversation, so a failed message never lands in
+      // someone else's composer inviting the user to resend it to the wrong person.
+      if (chatIdRef.current === target) {
+        setInputText(prev => (prev.length === 0 ? text : prev));
+      }
+      // The alert is NOT gated on the conversation: sendMessage has no retry or queue,
+      // so a rejection means the text is permanently lost, and the composer was already
+      // cleared optimistically. Staying silent because the user has moved on would let
+      // them believe a message was delivered when it never was. The wording names no
+      // conversation, so showing it from elsewhere discloses nothing.
       Alert.alert('שגיאה', 'ההודעה לא נשלחה. נסה שוב.');
     } finally {
-      setSending(false);
+      setSendingFor(prev => (prev === target ? null : prev));
     }
-  }, [chatId, inputText, sending]);
+  }, [chatId, inputText, sending, setInputText]);
 
   const renderItem = useCallback(({ item, index }: { item: ListItem; index: number }) => {
     if (isDivider(item)) {
