@@ -18,6 +18,7 @@ import {
   FieldValue,
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
+import { debugLog, debugError } from '../utils/debugLog';
 import { isActiveAccount } from '../admin/utils';
 
 export interface AppEvent {
@@ -107,6 +108,21 @@ export async function getVenueRegisteredUserIds(venueId: string): Promise<string
     for (const id of ev.attendeeIds ?? []) ids.add(id);
   }
   return Array.from(ids);
+}
+
+// The users registered to ONE specific event. Reads attendeeIds straight off the
+// event doc — no extra query — so the attendee list can be shown on the event itself
+// rather than only aggregated per venue.
+export async function getEventAttendeeIds(eventId: string): Promise<string[]> {
+  try {
+    const snap = await getDoc(doc(db, 'events', eventId));
+    const ids = (snap.data() as { attendeeIds?: string[] } | undefined)?.attendeeIds ?? [];
+    debugLog('EVENTS', 'attendees read', { eventId, count: ids.length });
+    return ids;
+  } catch (err) {
+    debugError('EVENTS', 'attendees read', err, { eventId });
+    throw err;
+  }
 }
 
 export async function getEvent(eventId: string): Promise<AppEvent | null> {
@@ -226,36 +242,52 @@ export async function registerForEvent(eventId: string): Promise<void> {
   const eventRef = doc(db, 'events', eventId);
   const userRef = doc(db, 'users', uid);
 
-  await runTransaction(db, async (tx) => {
-    const [eventSnap, regSnap, userSnap] = await Promise.all([
-      tx.get(eventRef),
-      tx.get(regRef),
-      tx.get(userRef),
-    ]);
+  debugLog('EVENTS', 'register start', { eventId, regId });
+  try {
+    await runTransaction(db, async (tx) => {
+      const [eventSnap, regSnap, userSnap] = await Promise.all([
+        tx.get(eventRef),
+        tx.get(regRef),
+        tx.get(userRef),
+      ]);
 
-    if (!eventSnap.exists()) throw new Error('Event not found');
-    const data = eventSnap.data();
-    if (data.attendeeCount >= data.capacity) throw new Error('Event is full');
-    if (regSnap.exists() && regSnap.data()?.status === 'registered') {
-      throw new Error('Already registered');
-    }
+      if (!eventSnap.exists()) throw new Error('Event not found');
+      const data = eventSnap.data();
+      // Log the decision inputs BEFORE the guards: when a registration is refused,
+      // this line is what distinguishes "event genuinely full" from "counter drifted"
+      // without needing to reproduce.
+      debugLog('EVENTS', 'register preconditions', {
+        eventId,
+        attendeeCount: data.attendeeCount ?? null,
+        capacity: data.capacity ?? null,
+        alreadyRegistered: regSnap.exists() ? (regSnap.data()?.status ?? null) : null,
+      });
+      if (data.attendeeCount >= data.capacity) throw new Error('Event is full');
+      if (regSnap.exists() && regSnap.data()?.status === 'registered') {
+        throw new Error('Already registered');
+      }
 
-    const gender = userSnap.data()?.gender as 'male' | 'female' | 'other' | undefined;
-    const genderField = gender === 'male' || gender === 'female' ? gender : 'other';
+      const gender = userSnap.data()?.gender as 'male' | 'female' | 'other' | undefined;
+      const genderField = gender === 'male' || gender === 'female' ? gender : 'other';
 
-    tx.set(regRef, {
-      userId: uid,
-      eventId,
-      status: 'registered',
-      genderField,
-      timestamp: serverTimestamp(),
+      tx.set(regRef, {
+        userId: uid,
+        eventId,
+        status: 'registered',
+        genderField,
+        timestamp: serverTimestamp(),
+      });
+      tx.update(eventRef, {
+        attendeeCount: increment(1),
+        [`attendeeCounts.${genderField}`]: increment(1),
+        attendeeIds: arrayUnion(uid),
+      });
     });
-    tx.update(eventRef, {
-      attendeeCount: increment(1),
-      [`attendeeCounts.${genderField}`]: increment(1),
-      attendeeIds: arrayUnion(uid),
-    });
-  });
+  } catch (err) {
+    debugError('EVENTS', 'register', err, { eventId, regId });
+    throw err;
+  }
+  debugLog('EVENTS', 'register ok', { eventId, regId });
 }
 
 export async function updateEvent(

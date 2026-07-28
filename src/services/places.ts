@@ -46,7 +46,12 @@ export async function searchPlaces(input: string): Promise<AutocompletePredictio
       languageCode: 'he',
       regionCode: 'IL',
       includedRegionCodes: ['il'],
-      includedPrimaryTypes: ['street_address', 'route', 'premise', 'subpremise'],
+      // NO 'route': a route result is a whole street with no house number, and its
+      // coordinates are the street's CENTROID. A venue saved from one sits in the
+      // middle of the street, so the check-in proximity radius effectively covers the
+      // entire street rather than the building. Only precise, house-number-level
+      // results are offered, which forces the business to pick an exact address.
+      includedPrimaryTypes: ['street_address', 'premise', 'subpremise'],
     }),
   });
 

@@ -2,9 +2,11 @@ import {
   PhoneAuthProvider,
   signInWithCredential,
   signOut as firebaseSignOut,
+  getAdditionalUserInfo,
   User,
 } from 'firebase/auth';
 import { auth } from '../config/firebase';
+import { debugLog, debugError } from '../utils/debugLog';
 
 const ISRAELI_MOBILE_REGEX = /^\+9725[0-9]{8}$/;
 
@@ -12,12 +14,28 @@ export async function verifyOTP(
   verificationId: string,
   otp: string
 ): Promise<User> {
-  const credential = PhoneAuthProvider.credential(verificationId, otp);
-  const userCredential = await signInWithCredential(auth, credential);
-  return userCredential.user;
+  debugLog('AUTH', 'verify start', { otpLen: otp.length, hasVerificationId: !!verificationId });
+  try {
+    const credential = PhoneAuthProvider.credential(verificationId, otp);
+    const userCredential = await signInWithCredential(auth, credential);
+    // isNewUser distinguishes "signed up" from "signed back in" — the single most
+    // useful fact when a flow lands on the wrong screen after verification. It must
+    // come from getAdditionalUserInfo(): the modular SDK does NOT put
+    // additionalUserInfo on the credential object, so reading it there is always
+    // undefined (which is exactly what the first instrumented run logged).
+    debugLog('AUTH', 'verify ok', {
+      uid: userCredential.user.uid,
+      isNewUser: getAdditionalUserInfo(userCredential)?.isNewUser ?? null,
+    });
+    return userCredential.user;
+  } catch (err) {
+    debugError('AUTH', 'verify', err);
+    throw err;
+  }
 }
 
 export async function signOut(): Promise<void> {
+  debugLog('AUTH', 'sign out', { uid: auth.currentUser?.uid ?? null });
   await firebaseSignOut(auth);
 }
 

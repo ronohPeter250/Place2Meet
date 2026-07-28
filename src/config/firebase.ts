@@ -54,6 +54,24 @@ try {
   auth = getAuth(app);
 }
 
+// E2E TEST BUILDS ONLY — never enabled in a shipped build.
+//
+// Firebase's documented switch for automated testing. Combined with the project's
+// configured test phone numbers it skips BOTH the reCAPTCHA challenge and the real
+// SMS, returning the preset verification code instead. Without it, phone sign-in
+// presents an image CAPTCHA, which by design cannot be driven by a test harness.
+//
+// Gated on an explicit build-time flag that is absent from every normal build
+// (`app.json`/`eas.json` never set it): a release built the usual way has
+// EXPO_PUBLIC_E2E undefined, so this branch is dead code there. It is deliberately a
+// SEPARATE flag from EXPO_PUBLIC_DEBUG_LOGS — turning on diagnostics must never, as a
+// side effect, weaken authentication.
+if (process.env.EXPO_PUBLIC_E2E === '1') {
+  // eslint-disable-next-line no-console
+  console.warn('[firebase] E2E MODE: app verification disabled. This build must not be distributed.');
+  (auth as { settings?: { appVerificationDisabledForTesting?: boolean } }).settings!.appVerificationDisabledForTesting = true;
+}
+
 export { auth };
 export const db = getFirestore(app);
 export const storage = getStorage(app);

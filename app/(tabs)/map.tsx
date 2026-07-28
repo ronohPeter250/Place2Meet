@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { captureRef } from 'react-native-view-shot';
@@ -6,16 +6,19 @@ import * as Location from 'expo-location';
 import { debugLog } from '../../src/utils/debugLog';
 let MapView: any;
 let Marker: any;
+let MapCircle: any;
 let PROVIDER_GOOGLE: any;
 try {
   const maps = require('react-native-maps');
   MapView = maps.default;
   Marker = maps.Marker;
+  MapCircle = maps.Circle;
   PROVIDER_GOOGLE = maps.PROVIDER_GOOGLE;
-  debugLog('MAP', 'rn-maps module loaded', { hasMapView: !!MapView, hasMarker: !!Marker, provider: PROVIDER_GOOGLE });
+  debugLog('MAP', 'rn-maps module loaded', { hasMapView: !!MapView, hasMarker: !!Marker, hasCircle: !!MapCircle, provider: PROVIDER_GOOGLE });
 } catch (e) {
   MapView = null;
   Marker = null;
+  MapCircle = null;
   PROVIDER_GOOGLE = undefined;
   debugLog('MAP', 'rn-maps require FAILED', { error: String(e) });
 }
@@ -34,6 +37,59 @@ import { colors } from '../../src/theme';
 import Constants from 'expo-constants';
 
 const DEFAULT_FILTERS: FilterValues = { genders: [], ageRange: [18, 25], relationshipTypes: [] };
+
+// Radar sweep: rings expand from the user outward and fade as they go. Metres, so the
+// sweep keeps a real-world size and scales correctly with the map's zoom.
+const RADAR_RINGS = 3;
+const RADAR_MIN_M = 40;
+const RADAR_MAX_M = 280;
+// Frames per full sweep, and the tick between them. `phase` must advance through MANY
+// more frames than there are rings: with frames == rings the per-ring offsets are just
+// a rotation of the same fixed set, so every tick renders a pixel-identical frame and
+// the "animation" is four motionless circles. Radius/alpha are pure functions of t, so
+// only a t that genuinely changes over time produces movement.
+const RADAR_FRAMES = 16;
+const RADAR_TICK_MS = 200;
+
+// The animation lives in its OWN memoised component, and the tick state with it.
+// If the phase were MapScreen state, every tick would re-render the entire map —
+// re-running the render-time debugLog, which in a diagnostics build is a Firestore
+// WRITE. At ~1.1 Hz that is a continuous write stream for as long as the map is open.
+// Isolating it here means a tick re-renders only these four circles.
+// The interval is started and stopped by useFocusEffect, so it does not keep running
+// (or drawing) once the user moves to another tab.
+const RadarRings = React.memo(function RadarRings({ latitude, longitude }: { latitude: number; longitude: number }) {
+  const [phase, setPhase] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      const id = setInterval(() => setPhase(p => (p + 1) % RADAR_FRAMES), RADAR_TICK_MS);
+      return () => clearInterval(id);
+    }, []),
+  );
+  if (!MapCircle) return null;
+  return (
+    <>
+      {Array.from({ length: RADAR_RINGS }).map((_, i) => {
+        // Position in the sweep for THIS ring: the frame counter advances t on every
+        // tick (so each ring genuinely grows and fades), while the per-ring offset
+        // spaces the rings out so they trail one another. t wraps to 0, which snaps the
+        // ring back to the centre to start the next sweep.
+        const t = ((phase / RADAR_FRAMES) + i / RADAR_RINGS) % 1;
+        return (
+          <MapCircle
+            key={`radar_${i}`}
+            center={{ latitude, longitude }}
+            radius={RADAR_MIN_M + t * (RADAR_MAX_M - RADAR_MIN_M)}
+            strokeWidth={2}
+            strokeColor={`rgba(255,107,53,${(0.5 * (1 - t)).toFixed(3)})`}
+            fillColor={`rgba(255,107,53,${(0.08 * (1 - t)).toFixed(3)})`}
+            zIndex={1}
+          />
+        );
+      })}
+    </>
+  );
+});
 // Prefer the inlined env var (local builds); fall back to app.json `extra` so a
 // cloud/EAS build — which has no gitignored .env — still gets the cloud Map ID.
 const GOOGLE_MAP_ID =
@@ -246,6 +302,10 @@ export default function MapScreen() {
   const [showVenuePopup, setShowVenuePopup] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
+  // The profile-derived defaults are applied at most once per mount; after that the
+  // user's own filter choices win, including deliberately clearing everything.
+  const filtersSeededRef = useRef(false);
+
   const [loadingVenues, setLoadingVenues] = useState(true);
   const [checkinCounts, setCheckinCounts] = useState<Map<string, number>>(new Map());
   const [myPhoto, setMyPhoto] = useState<string | undefined>(undefined);
@@ -355,7 +415,25 @@ export default function MapScreen() {
     (async () => {
       try {
         const profile = await getUserProfile(user.uid);
-        if (!cancelled) { setMyPhoto(profile?.photos?.[0]); debugLog('MAP', 'profile loaded', { hasPhoto: !!profile?.photos?.[0] }); }
+        if (cancelled) return;
+        setMyPhoto(profile?.photos?.[0]);
+        // Seed the map filter from the user's own profile rather than a hardcoded
+        // default: who they are looking for, and what kind of relationship, is already
+        // stated in onboarding. Applied ONCE (filtersSeeded) so it can never overwrite
+        // a selection the user has since made by hand.
+        setFilters(prev => {
+          if (filtersSeededRef.current) return prev;
+          filtersSeededRef.current = true;
+          const genders = (profile?.datingPreference ?? []) as FilterValues['genders'];
+          const relationshipTypes = (profile?.relationshipType ?? []) as FilterValues['relationshipTypes'];
+          if (!genders.length && !relationshipTypes.length) return prev;
+          return { ...prev, genders, relationshipTypes };
+        });
+        debugLog('MAP', 'profile loaded', {
+          hasPhoto: !!profile?.photos?.[0],
+          seededGenders: profile?.datingPreference ?? null,
+          seededTypes: profile?.relationshipType ?? null,
+        });
       } catch (err) { debugLog('MAP', 'profile fetch FAILED', { error: String(err) }); }
     })();
     return () => { cancelled = true; };
@@ -462,7 +540,15 @@ export default function MapScreen() {
       checkInFlightRef.current = false;
     }
   }, []);
-  const handleFilterApply = useCallback((f: FilterValues) => { setFilters(f); setShowFilter(false); }, []);
+  const handleFilterApply = useCallback((f: FilterValues) => {
+    // Claim the filter for the user. The seed guard alone was not enough: it only
+    // prevented a SECOND seed, so a profile fetch that resolved after the user had
+    // already applied filters still overwrote their choice (and, with the modal open,
+    // reset the chips mid-edit).
+    filtersSeededRef.current = true;
+    setFilters(f);
+    setShowFilter(false);
+  }, []);
   const handleFilterClose = useCallback(() => setShowFilter(false), []);
   const handleFilterOpen = useCallback(() => setShowFilter(true), []);
 
@@ -541,6 +627,11 @@ export default function MapScreen() {
             markers are unreliable on New-Arch Android (the whole reason markers
             are pre-rendered to PNGs), so a View fallback could itself not paint.
             The native pin always renders. */}
+        {/* Radar sweep under the user's own marker, so a stationary avatar still reads
+            as "live". Suppressed together with the marker whenever the position is not
+            a real fix, so it can never imply presence at the seeded default. */}
+        {!locationError && <RadarRings latitude={latitude} longitude={longitude} />}
+
         {/* ...but ONLY when the coordinate is a real fix. With permission granted and
             the fix failed/timed out, latitude/longitude still hold useLocation's seeded
             Tel Aviv default — drawing the user there would place them ~90km from where

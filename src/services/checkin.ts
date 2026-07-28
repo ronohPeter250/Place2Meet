@@ -33,7 +33,13 @@ type Gender = 'male' | 'female' | 'other';
 // radius than this one), so anyone bypassing the UI can simply echo those coordinates
 // back. Both checks constrain the honest path only; see the ACCEPTED RISK note on
 // venue_presence in firestore.rules.
-const CHECKIN_RADIUS_METERS = 200;
+// THE venue radius, in metres — the single answer to "what is a venue's radius?".
+// Exported because event registration is gated on the same distance: two different
+// numbers for "am I at this place" would be indefensible to explain.
+// The Firestore rule uses a deliberately WIDER 300m (see checkinNearVenue): the extra
+// 100m is slack for GPS jitter, so a fix the client accepts is never rejected
+// server-side. Keep the rule >= this value if either is ever changed.
+export const CHECKIN_RADIUS_METERS = 200;
 
 function normalizeGender(g: unknown): Gender {
   return g === 'male' || g === 'female' ? g : 'other';
@@ -50,7 +56,7 @@ function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number):
 
 // The venue's authoritative coordinates: a venue doc's `location` GeoPoint, or a
 // business doc's `coordinates` GeoPoint. Returns null if neither has coordinates.
-async function getVenueGeo(venueId: string): Promise<{ lat: number; lng: number } | null> {
+export async function getVenueGeo(venueId: string): Promise<{ lat: number; lng: number } | null> {
   const venueSnap = await getDoc(doc(db, 'venues', venueId));
   const loc = (venueSnap.data() as { location?: { latitude: number; longitude: number } } | undefined)?.location;
   if (loc && typeof loc.latitude === 'number') return { lat: loc.latitude, lng: loc.longitude };
@@ -74,14 +80,14 @@ export class CheckInError extends Error {
 //  - venue_presence_entries/{autoId} (public read, IDENTITY-FREE — venueId/gender/
 //    expiresAt, NO userId): so anyone can COUNT per-gender presence per venue,
 //    globally, without being able to enumerate WHO is where.
-//  - venue_presence/{venueId}/present/{uid} (CO-PRESENCE GATED, venue-scoped): carries
-//    identity (doc id = uid) so the venue detail can show who's here. NOT public read —
-//    unlike the entries above, the rule additionally requires the READER to hold a LIVE
-//    check-in at this same venue, so callers must keep the `checkedInHere` gate in
-//    app/(tabs)/venue/[venueId].tsx or the read is denied. That gate raises the cost of
-//    tracking but does NOT prevent it: check-ins are self-mintable and unlimited, so a
-//    raw client can hold one at every venue and read them all. Documented ACCEPTED RISK
-//    — see the note on venue_presence in firestore.rules for the full attack.
+//  - venue_presence/{venueId}/present/{uid} (OPEN READ, venue-scoped): carries identity
+//    (doc id = uid) so the venue detail can show who's here. Readable by ANY active
+//    authenticated user, for any venue, with no check-in of their own — the co-presence
+//    gate that used to stand here was removed by owner decision (2026-07-27) because it
+//    made the feature unreachable. Callers therefore need no `checkedInHere` guard.
+//    Understand the consequence: iterating the listable venue collections yields a live
+//    uid -> venue map of the whole checked-in user base. See the note on venue_presence
+//    in firestore.rules.
 // All are coupled by the rules to the caller's own matching check-in.
 export async function checkInToVenue(
   venueId: string,
@@ -279,11 +285,12 @@ export function subscribeVenueActiveCounts(
 }
 
 // The distinct userIds currently present at a venue. Reads the VENUE-SCOPED
-// subcollection venue_presence/{venueId}/present/{uid} (doc id == uid). Unlike the
-// flat entries it is NOT globally queryable, which raises the cost of tracking — but
-// it does NOT prevent it: check-ins are self-mintable and uncapped, so a raw client
-// can hold one at every venue and read every present list. Documented ACCEPTED RISK;
-// see the venue_presence note in firestore.rules.
+// subcollection venue_presence/{venueId}/present/{uid} (doc id == uid). Readable by any
+// active authenticated user with NO check-in of their own — the co-presence gate was
+// removed by owner decision (2026-07-27). Being venue-scoped only means the caller must
+// ask one venue at a time; iterating the listable venue collections still yields a live
+// uid -> venue map of everyone checked in. Documented ACCEPTED RISK; see the
+// venue_presence note in firestore.rules.
 export async function getVenuePresentUserIds(venueId: string): Promise<string[]> {
   const snap = await getDocs(query(
     collection(db, 'venue_presence', venueId, 'present'),

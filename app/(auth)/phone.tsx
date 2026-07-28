@@ -16,6 +16,33 @@ import app, { auth } from '../../src/config/firebase';
 // Re-export for verify.tsx
 export { getPendingVerification, clearPendingVerification } from '../../src/services/loginState';
 
+// E2E TEST BUILDS ONLY — see the matching gate in src/config/firebase.ts.
+// Phone sign-in needs an ApplicationVerifier. The SDK's own RecaptchaVerifier swaps in
+// a mock (which resolves to the literal token 'token') when
+// appVerificationDisabledForTesting is set, but it requires a DOM and so cannot run in
+// React Native — which is why this app supplies a WebView-based verifier instead. That
+// custom verifier knows nothing about the test flag, so it always renders the real
+// challenge and an automated run dead-ends on an image CAPTCHA.
+// This stub reproduces exactly what the SDK's own mock returns; paired with a phone
+// number registered under Auth's "test phone numbers", the backend accepts it and
+// returns the preset code without sending an SMS.
+// Guarded by a build-time flag that no normal build sets, so this is dead code in any
+// shipped APK.
+const E2E = process.env.EXPO_PUBLIC_E2E === '1';
+const e2eVerifier = {
+  type: 'recaptcha',
+  verify: async () => {
+    console.log('[E2E] verifier.verify() called -> returning mock token');
+    return 'token';
+  },
+  // The SDK only documents `type` + `verify()`, but supply the rest of the
+  // RecaptchaVerifier surface as no-ops so any internal call cannot hit undefined.
+  render: async () => 0,
+  clear: () => {},
+  _reset: () => {},
+  _destroy: () => {},
+};
+
 export default function PhoneScreen() {
   const router = useRouter();
   const { loginType } = useLocalSearchParams<{ loginType?: string }>();
@@ -46,7 +73,7 @@ export default function PhoneScreen() {
       const provider = new PhoneAuthProvider(auth);
       const verificationId = await provider.verifyPhoneNumber(
         formattedPhone,
-        recaptchaVerifier.current!
+        (E2E ? e2eVerifier : recaptchaVerifier.current!) as FirebaseRecaptchaVerifierModal
       );
 
       setPendingVerification(verificationId, formattedPhone);
@@ -56,6 +83,9 @@ export default function PhoneScreen() {
       router.push('/(auth)/verify');
     } catch (err: unknown) {
       console.error('Phone auth error:', err);
+      // A bare message ("undefined is not a function") is not attributable to a line.
+      // The stack is what identifies which call actually failed.
+      console.error('Phone auth stack:', (err as { stack?: string }).stack ?? '(no stack)');
       const code = (err as { code?: string }).code ?? '';
       setError(getAuthErrorMessage(code));
     } finally {

@@ -9,6 +9,7 @@ import {
   FieldValue,
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
+import { debugLog, debugError } from '../utils/debugLog';
 import { AccountStatus, PhotoModerationStatus } from '../admin/types';
 
 const MAX_NAME_LENGTH = 50;
@@ -89,17 +90,27 @@ export async function createUserProfile(
   // creation time. Those fields are stamped only on first creation.
   const ref = doc(db, 'users', uid);
   const existing = await getDoc(ref);
-  if (existing.exists()) {
-    await setDoc(ref, { ...sanitizedData, uid, lastActive: serverTimestamp() }, { merge: true });
-    return;
+  // Field NAMES only — never values. Onboarding carries name/birthday/city/photos,
+  // and this collection is readable by admins, so logging the payload itself would
+  // put personal data into a diagnostics collection.
+  debugLog('USER', 'profile write start', { uid, fields: Object.keys(sanitizedData), isNew: !existing.exists() });
+  try {
+    if (existing.exists()) {
+      await setDoc(ref, { ...sanitizedData, uid, lastActive: serverTimestamp() }, { merge: true });
+    } else {
+      await setDoc(ref, {
+        ...sanitizedData,
+        uid,
+        profileComplete: false,
+        createdAt: serverTimestamp(),
+        lastActive: serverTimestamp(),
+      }, { merge: true });
+    }
+  } catch (err) {
+    debugError('USER', 'profile write', err, { uid, fields: Object.keys(sanitizedData) });
+    throw err;
   }
-  await setDoc(ref, {
-    ...sanitizedData,
-    uid,
-    profileComplete: false,
-    createdAt: serverTimestamp(),
-    lastActive: serverTimestamp(),
-  }, { merge: true });
+  debugLog('USER', 'profile write ok', { uid, fields: Object.keys(sanitizedData) });
 }
 
 export async function updateUserProfile(

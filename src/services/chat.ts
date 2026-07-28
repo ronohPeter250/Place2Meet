@@ -18,6 +18,7 @@ import {
   FieldValue,
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
+import { debugLog, debugError } from '../utils/debugLog';
 
 export interface Chat {
   id: string;
@@ -141,7 +142,14 @@ export async function sendMessage(
     lastMessageAt: serverTimestamp(),
     lastSenderId: uid,
   });
-  await batch.commit();
+  debugLog('CHAT', 'send start', { chatId, msgId: msgRef.id, chars: text.trim().length });
+  try {
+    await batch.commit();
+  } catch (err) {
+    debugError('CHAT', 'send', err, { chatId, msgId: msgRef.id });
+    throw err;
+  }
+  debugLog('CHAT', 'send ok', { chatId, msgId: msgRef.id });
 }
 
 /**
@@ -187,8 +195,15 @@ export async function createChatForMatch(
   // enforce this, so a bypass attempt is rejected either way).
   const swipe1 = await getDoc(doc(db, 'swipes', `${user1}_${user2}`));
   const swipe2 = await getDoc(doc(db, 'swipes', `${user2}_${user1}`));
+  // Both directions logged explicitly: "no chat was created" is otherwise
+  // indistinguishable between a genuinely one-sided like and a failed/denied read.
+  debugLog('CHAT', 'match precheck', {
+    a: `${user1}_${user2}`, aExists: swipe1.exists(), aAction: swipe1.data()?.action ?? null,
+    b: `${user2}_${user1}`, bExists: swipe2.exists(), bAction: swipe2.data()?.action ?? null,
+  });
   if (!swipe1.exists() || swipe1.data()?.action !== 'like' ||
       !swipe2.exists() || swipe2.data()?.action !== 'like') {
+    debugLog('CHAT', 'FAIL match precheck: not mutual', { user1, user2 });
     throw new Error('Cannot create chat without a mutual match');
   }
 
@@ -205,17 +220,25 @@ export async function createChatForMatch(
   // match (or a retry) cannot both create the doc — the second sees it exists and
   // does nothing, so existing metadata (lastMessage/lastMessageAt) is never
   // clobbered and the chat is never reordered or blanked.
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(chatRef);
-    if (!snap.exists()) {
-      tx.set(chatRef, {
-        participants: pair,
-        lastMessage: '',
-        lastMessageAt: serverTimestamp(),
-      });
-    }
-  });
+  let created = false;
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(chatRef);
+      if (!snap.exists()) {
+        created = true;
+        tx.set(chatRef, {
+          participants: pair,
+          lastMessage: '',
+          lastMessageAt: serverTimestamp(),
+        });
+      }
+    });
+  } catch (err) {
+    debugError('CHAT', 'create for match', err, { chatId, participants: pair });
+    throw err;
+  }
 
+  debugLog('CHAT', 'create for match ok', { chatId, created, reusedExisting: !created });
   return chatId;
 }
 

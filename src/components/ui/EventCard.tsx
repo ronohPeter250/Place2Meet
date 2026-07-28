@@ -4,7 +4,7 @@ import { GenderOtherSmallIcon, GenderFemaleSmallIcon, GenderMaleSmallIcon } from
 import { CachedImage } from './CachedImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Timestamp } from 'firebase/firestore';
-import { colors } from '../../theme';
+import { colors, typography } from '../../theme';
 import { Button } from './Button';
 import { he } from '../../i18n/he';
 
@@ -21,10 +21,12 @@ interface EventCardProps {
   attendeeCounts?: { male: number; female: number; other: number };
   hideReserve?: boolean;
   onPress: () => void;
+  /** Optional: show a "who's coming" action that opens the attendee list. */
+  onShowAttendees?: () => void;
 }
 
 export const EventCard = React.memo(function EventCard({
-  title, description, venueName, venueAddress, venueImage, dateTime, attendeeCount, capacity, coverImage, attendeeCounts, hideReserve, onPress,
+  title, description, venueName, venueAddress, venueImage, dateTime, attendeeCount, capacity, coverImage, attendeeCounts, hideReserve, onPress, onShowAttendees,
 }: EventCardProps) {
   const dateDisplay = useMemo(() => {
     if (!dateTime?.toDate) return '';
@@ -130,6 +132,17 @@ export const EventCard = React.memo(function EventCard({
           </View>
         )}
 
+        {/* "Who's coming" — a separate action from reserving, and available whether or
+            not the viewer has a spot: the card previously offered reserving as the ONLY
+            thing you could do with an event. */}
+        {onShowAttendees && (
+          <TouchableOpacity style={styles.attendeesBtn} onPress={onShowAttendees} activeOpacity={0.7}>
+            <Text style={styles.attendeesBtnText}>
+              {attendeeCount > 0 ? `מי מגיע? (${attendeeCount})` : 'מי מגיע?'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* CTA button - only for regular users */}
         {!hideReserve && (
           <Button
@@ -144,6 +157,15 @@ export const EventCard = React.memo(function EventCard({
 });
 
 const styles = StyleSheet.create({
+  attendeesBtn: {
+    // width matches ctaButton below: the card's content column is alignItems:'flex-end',
+    // so without it this collapsed to a narrow right-hugging pill above a full-width
+    // button. No marginTop either — the container already applies gap:16, and adding
+    // one made the spacing above this row differ from every other row in the card.
+    width: '100%', paddingVertical: 12, borderRadius: 12,
+    borderWidth: 1, borderColor: colors.primary, alignItems: 'center',
+  },
+  attendeesBtnText: { ...typography.body, color: colors.primary, fontFamily: 'Rubik_600SemiBold' },
   container: {
     backgroundColor: colors.surface,
     borderRadius: 16,

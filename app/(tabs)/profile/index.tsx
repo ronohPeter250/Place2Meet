@@ -12,6 +12,11 @@ import {
   SettingsPrivacyIcon,
 } from '../../../src/components/ui/SvgIcons';
 import { getUserProfile, UserProfile, calculateAge } from '../../../src/services/users';
+import { checkOut } from '../../../src/services/checkin';
+
+// Sign-out must never wait longer than this on the courtesy check-out.
+const CHECKOUT_ON_LOGOUT_TIMEOUT_MS = 3000;
+import { debugError } from '../../../src/utils/debugLog';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { openWhatsApp } from '../../../src/lib/contact';
 import { colors } from '../../../src/theme';
@@ -44,6 +49,26 @@ export default function ProfileScreen() {
           text: he.profile.logout,
           style: 'destructive',
           onPress: async () => {
+            // Leave the venue BEFORE dropping the session. Presence is otherwise only
+            // cleared by its 4-hour expiry, so signing out left the user showing as
+            // "here now" at a venue they had left — visible to everyone there.
+            // The write needs the still-valid session, so it has to happen first.
+            //
+            // BOUNDED, and a try/catch is not enough for that: offline, the Firestore
+            // SDK queues the write locally and its promise NEVER SETTLES (it waits for
+            // a server ack), so awaiting it would hang sign-out forever with no
+            // feedback — catch only handles a rejection, not a promise that never
+            // resolves. Racing a timer keeps sign-out working with no connection; the
+            // queued delete still flushes when the device reconnects, and the 4-hour
+            // expiry remains the backstop if it never does.
+            try {
+              await Promise.race([
+                checkOut(),
+                new Promise<void>(resolve => setTimeout(resolve, CHECKOUT_ON_LOGOUT_TIMEOUT_MS)),
+              ]);
+            } catch (err) {
+              debugError('AUTH', 'check-out on logout', err);
+            }
             await logout();
             router.replace('/(auth)/welcome');
           },

@@ -29,8 +29,50 @@ service cloud.firestore {
     }
 
 
+    // A moderated-off USER stays moderated off even if the same uid also owns a
+    // business profile. Without this, suspension was trivially escapable: the
+    // businesses create rule only checks that the doc id equals the caller's uid, so a
+    // suspended user could write businesses/{their own uid} with no accountStatus,
+    // satisfy isActiveBusiness(), and be an "active actor" again — regaining every
+    // isActiveActor()-gated read, including the venue present lists.
+    function isSuspendedUser(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && ('accountStatus' in get(/databases/$(database)/documents/users/$(uid)).data)
+        && get(/databases/$(database)/documents/users/$(uid)).data.accountStatus != 'active';
+    }
+
+    // The mirror of the above, and it MUST exist: moderation is applied to whichever
+    // doc the account was suspended on (updateUserStatus writes users/{uid};
+    // saveBusinessForAdmin writes businesses/{uid}), while isActiveActor() is satisfied
+    // by EITHER doc. Vetoing only one side left the other wide open — a suspended
+    // business simply signed in as a user, completed onboarding (users create carries no
+    // moderation check), and was fully operational again after one document write.
+    function isSuspendedBusiness(uid) {
+      return exists(/databases/$(database)/documents/businesses/$(uid))
+        && ('accountStatus' in get(/databases/$(database)/documents/businesses/$(uid)).data)
+        && get(/databases/$(database)/documents/businesses/$(uid)).data.accountStatus != 'active';
+    }
+
+    // An account is an actor if EITHER of its profiles is active. Deliberately NOT
+    // "suspended on either profile == suspended": a single uid may legitimately hold
+    // both a personal and a business profile (see AuthContext), and vetoing on either
+    // one bricked the other — suspending a venue silently broke the owner's PERSONAL
+    // account (empty map, failing events tab, no chats) while app/index.tsx still
+    // routed them into the app rather than the blocked screen, because AuthContext
+    // derives status from the signed-in profile only. That is a worse outcome than the
+    // hole it was closing.
+    //
+    // The escape hatch it was meant to shut is closed where it belongs — at the CREATE
+    // rules for users/ and businesses/, which refuse to mint a second profile for a uid
+    // already suspended on the other one. Suspension cannot be escaped after the fact.
+    //
+    // RESIDUAL, stated plainly: an account that ALREADY held both profiles before being
+    // suspended on one of them keeps the capabilities of the other. Closing that is a
+    // moderation-policy decision, not a rules one — the admin tools would need to
+    // suspend both documents when the intent is to ban the person, not just the venue.
     function isActiveActor() {
-      return request.auth != null && (isAdmin() || isActiveUser(request.auth.uid) || isActiveBusiness(request.auth.uid));
+      return request.auth != null
+        && (isAdmin() || isActiveUser(request.auth.uid) || isActiveBusiness(request.auth.uid));
     }
 
     // The participant that is NOT the caller (for a 2-person chat).
@@ -119,8 +161,11 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (request.auth != null && request.auth.uid == userId)
         || (isActiveActor() && isActiveUser(userId));
+      // Mirrors the same check on businesses create: a moderated-off BUSINESS must not
+      // be able to mint a user profile for its own uid and walk straight back in.
       allow create: if request.auth != null
         && request.auth.uid == userId
+        && !isSuspendedBusiness(request.auth.uid)
         && !request.resource.data.keys().hasAny(userAdminFields())
         && (request.resource.data.get('profileComplete', false) != true || profileFieldsValid());
       // A profile may only be marked profileComplete==true when the required
@@ -169,9 +214,12 @@ service cloud.firestore {
       // (contactName/email) must NOT live here — it goes in the private subdoc
       // below. The owner-write branches forbid those keys on the public doc.
       allow read: if isAdmin() || (request.auth != null && (request.auth.uid == businessId || isActiveActor()));
+      // Defence in depth alongside isActiveActor()'s suspension check: a moderated-off
+      // user must not be able to mint a business profile for their own uid at all.
       allow create: if isAdmin()
         || (request.auth != null
           && request.auth.uid == businessId
+          && !isSuspendedUser(request.auth.uid)
           && !request.resource.data.keys().hasAny(businessAdminFields())
           && !request.resource.data.keys().hasAny(['contactName', 'email']));
       allow update: if isAdmin()
@@ -327,50 +375,38 @@ service cloud.firestore {
 
     // Venue-scoped PRESENCE IDENTITY: venue_presence/{venueId}/present/{uid} =
     // { gender, expiresAt } (doc id = uid). Reveals who is checked in at a venue.
-    // READ is gated on the reader being CHECKED IN AT THE SAME VENUE, and a
-    // collectionGroup('present') read matches no rule (denied). Carries NO GPS (that
-    // stays in the checkin doc, which is readable by its owner, the venue business and
-    // admins — not "owner-only", and the venue business can therefore see the exact
+    // READ is OPEN to any active authenticated user (see the note on the rule itself);
+    // a collectionGroup('present') read matches no rule and is denied. Carries NO GPS
+    // (that stays in the checkin doc, which is readable by its owner, the venue
+    // business and admins — not "owner-only", so the venue business can see the exact
     // coordinates its own visitors checked in from).
-    //
-    // Do NOT read the co-presence gate as an anti-stalking control — it stops the
-    // HONEST client only. Because a check-in is self-mintable from anywhere and is not
-    // limited in number, a raw client can still scan every venue and enumerate present
-    // users. See the ACCEPTED RISK note on the read rule below for the full attack and
-    // why it is knowingly not closed here.
     match /venue_presence/{venueId}/present/{uid} {
-      // Read requires a LIVE (non-expired) check-in of the reader at this venue, so
-      // access lapses with the presence window (a lingering set-and-forget check-in
-      // can't grant permanent read access).
+      // OPEN READ — product decision (2026-07-27, owner-directed).
       //
-      // ACCEPTED RISK — do not read the above as a security boundary. Stated at full
-      // strength, because an earlier version of this comment understated it: check-in
-      // proximity is client-attested (checkinNearVenue validates client-supplied
-      // lat/lng), /venues and /businesses are listable, and NOTHING here limits how
-      // many venues one user may be checked in at simultaneously. A raw client can
-      // therefore script: read every venue's GeoPoint -> create checkins/{uid}_{venue}
-      // for EVERY venue echoing those coordinates -> read every venue's present list.
-      // It is also traceless: `create` only requires that the entryId does not already
-      // exist, never that the presence entry is actually created, so the attacker
-      // never appears in any public count. Refreshing expiresAt (allow update below)
-      // re-validates no position, so the whole map is held open indefinitely from
-      // anywhere. Net effect: any authenticated user can obtain a live uid -> venue
-      // feed for the entire checked-in user base — a mass-location primitive on a
-      // dating app, not merely "someone could fake being at one bar".
+      // Seeing who is at a venue, and being able to contact them, is the core purpose
+      // of the product; requiring the viewer to be checked in first made the feature
+      // unreachable in practice (you had to already be at the venue to learn whether
+      // anyone was there). The co-presence gate that previously stood here has been
+      // REMOVED at the owner's instruction.
       //
-      // This is a KNOWN, OWNER-ACCEPTED limitation of a client-only architecture
-      // (decision: 2026-07-23). Closing it requires server-side location attestation
-      // (Cloud Function / device integrity) — deferred, not solved.
+      // Understand precisely what this means, because it is no longer bounded by
+      // anything: any authenticated active user can now read, for ANY venue and with no
+      // check-in of their own, the exact list of user IDs physically present there
+      // right now — and resolve each to a full profile (name, photos, exact birthday,
+      // city) via the users read rule. Iterating the listable /venues and /businesses
+      // collections therefore yields a live uid -> venue map of the entire checked-in
+      // user base, at zero cost and with no trace.
       //
-      // NOTE on partial hardening, if this is ever revisited: requiring the check-in to
-      // co-create its presence entry (getAfter(...) != null) is NOT sufficient on its
-      // own. The venue_presence_entries delete rule lets the owner drop the entry
-      // immediately afterwards while keeping the check-in, so the stealth returns in
-      // two writes instead of one. Any real fix has to keep the check-in and its entry
-      // coupled for the check-in's whole lifetime, not just at creation.
-      allow read: if isActiveActor()
-        && exists(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId))
-        && get(/databases/$(database)/documents/checkins/$(request.auth.uid + '_' + venueId)).data.expiresAt > request.time;
+      // The previous gate did not stop a determined attacker (a check-in is
+      // self-mintable from anywhere and uncapped — see the deleted note in git history),
+      // but it did stop the CASUAL one, and it made bulk scanning cost a write per
+      // venue. That cost is now gone.
+      //
+      // If this is ever to be bounded without losing the feature, the shape that works
+      // is server-side: a Cloud Function that returns the present list for a single
+      // venue, rate-limited per caller, rather than direct client reads of the
+      // collection. Nothing at the rules layer can express "one venue at a time".
+      allow read: if isActiveActor();
       allow create, update: if request.auth != null
         && isActiveUser(request.auth.uid)
         && uid == request.auth.uid
@@ -514,11 +550,13 @@ service cloud.firestore {
       // can run getDocs(query(events, where('venueId','==',X))) and learn, per event,
       // exactly WHO will be at that address and WHEN — then resolve each uid to a full
       // profile via the users read rule. This needs no check-in, no proximity claim and
-      // no forged document, which makes it a stronger leak than the venue_presence gate
-      // documented above (that one only exposes who is somewhere NOW, and costs a write).
-      // app/(tabs)/venue/[venueId].tsx deliberately renders a COUNT ONLY, never
-      // identities — but that is a UI decision and is NOT a security boundary; the data
-      // stays readable underneath it.
+      // no forged document.
+      // The UI now SURFACES these identities deliberately (owner decision, 2026-07-27):
+      // app/(tabs)/venue/[venueId].tsx renders the registered users as a tappable grid,
+      // and app/(tabs)/events/index.tsx shows a per-event "מי מגיע?" list. An earlier
+      // version of this note claimed the screen showed a count only — that mitigation
+      // no longer exists, so the disclosure is live in the product, not just latent in
+      // the data.
       // Closing it properly means moving attendeeIds into a subcollection with its own
       // rules. Deferred because the field is load-bearing: src/services/events.ts
       // (registration + venue counts) and src/services/swipes.ts (candidate-deck build)
@@ -612,8 +650,15 @@ service cloud.firestore {
       // Was world-readable (read: if true) — logs can carry UIDs/device/error
       // details, so restrict reads to admins.
       allow read: if isAdmin();
-      allow create: if request.auth != null
-        && isActiveUser(request.auth.uid)
+      // isActiveActor(), not isActiveUser(): a BUSINESS account has businesses/{uid}
+      // and no users/{uid}, so isActiveUser() denied every log write from the entire
+      // business side of the app — business onboarding, event creation and event
+      // management produced no diagnostics at all. Admins likewise.
+      // (Events logged before the account doc exists — mid-signup — still cannot be
+      // written by any variant of this rule without dropping the account check
+      // altogether; those are covered by the console mirror in debugLog, read via
+      // `adb logcat`, rather than by weakening this gate.)
+      allow create: if isActiveActor()
         && request.resource.data.uid == request.auth.uid
         // Whitelist fields + cap sizes so an active user can't flood the collection
         // with arbitrary/oversized documents.

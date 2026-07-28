@@ -11,6 +11,7 @@ import {
   FieldValue,
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
+import { debugLog, debugError } from '../utils/debugLog';
 import { isActiveAccount } from '../admin/utils';
 import { UserProfile } from './users';
 
@@ -33,24 +34,44 @@ export async function createSwipe(
   if (uid === toUser) throw new Error('Cannot swipe on yourself');
 
   const swipeId = `${uid}_${toUser}`;
-  await setDoc(doc(db, 'swipes', swipeId), {
-    fromUser: uid,
-    toUser,
-    action,
-    venueId: venueId ?? null,
-    timestamp: serverTimestamp(),
-  });
+  debugLog('SWIPE', 'create start', { swipeId, action, venueId: venueId ?? null });
+  try {
+    await setDoc(doc(db, 'swipes', swipeId), {
+      fromUser: uid,
+      toUser,
+      action,
+      venueId: venueId ?? null,
+      timestamp: serverTimestamp(),
+    });
+  } catch (err) {
+    debugError('SWIPE', 'create', err, { swipeId, action });
+    throw err;
+  }
 
   if (action === 'like') {
-    return checkForMatch(uid, toUser);
+    const isMatch = await checkForMatch(uid, toUser);
+    debugLog('SWIPE', 'like recorded', { swipeId, isMatch });
+    return isMatch;
   }
+  debugLog('SWIPE', 'dislike recorded', { swipeId });
   return false;
 }
 
 async function checkForMatch(user1: string, user2: string): Promise<boolean> {
   const reverseSwipeId = `${user2}_${user1}`;
-  const reverseDoc = await getDoc(doc(db, 'swipes', reverseSwipeId));
-  return reverseDoc.exists() && reverseDoc.data()?.action === 'like';
+  try {
+    const reverseDoc = await getDoc(doc(db, 'swipes', reverseSwipeId));
+    const exists = reverseDoc.exists();
+    const action = exists ? reverseDoc.data()?.action : null;
+    // The reverse swipe is the whole basis of a match. Logging both existence and
+    // action separates "they never swiped me" from "they swiped dislike" from "the
+    // read was denied" — three very different bugs that all look like "no match".
+    debugLog('SWIPE', 'reverse check', { reverseSwipeId, exists, action: action ?? null });
+    return exists && action === 'like';
+  } catch (err) {
+    debugError('SWIPE', 'reverse check', err, { reverseSwipeId });
+    throw err;
+  }
 }
 
 export async function getSwipedUserIds(): Promise<Set<string>> {

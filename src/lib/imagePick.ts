@@ -1,6 +1,7 @@
 import { Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { debugLog, debugError } from '../utils/debugLog';
 
 // allowsEditing is intentionally OFF everywhere: the native Android crop screen's
 // confirm ("אישור") button is hidden/cut off on some devices, which left users
@@ -54,17 +55,23 @@ export async function pickFromGallery(): Promise<string | null> {
   // requestMediaLibraryPermissionsAsync actively BREAKS the gallery on Android 13+
   // (READ_MEDIA_IMAGES isn't a grantable legacy permission there, so the request
   // returns denied and the picker never opens). Only iOS needs the permission.
+  debugLog('PHOTO', 'gallery open', { platform: Platform.OS, apiLevel: Platform.Version });
   if (Platform.OS === 'ios') {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
+      debugLog('PHOTO', 'FAIL gallery permission denied', { status });
       Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
       return null;
     }
   }
   try {
-    return resolveResult(await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS));
+    const picked = await resolveResult(await ImagePicker.launchImageLibraryAsync(PICKER_OPTIONS));
+    debugLog('PHOTO', 'gallery result', { picked: !!picked });
+    return picked;
   } catch (e) {
-    console.error('[imagePick] gallery launch failed:', e);
+    // "The gallery doesn't open" has been reported from the field with no way to tell
+    // a permission refusal from a launch failure from a plain cancel. Log all three.
+    debugError('PHOTO', 'gallery launch', e, { platform: Platform.OS, apiLevel: Platform.Version });
     Alert.alert('שגיאה', 'לא ניתן לפתוח את הגלריה. נסה שוב.');
     return null;
   }
@@ -110,11 +117,17 @@ export function pickImageFromSource(source: PhotoSource): Promise<string | null>
  * permission denial (a Hebrew Alert is shown on denial).
  */
 export async function pickMultipleFromGallery(selectionLimit?: number): Promise<string[]> {
+  // Instrumented identically to pickFromGallery — this is the path the USER photo grid
+  // uses (PhotoGrid -> pickImagesFromSource), i.e. the one behind the "the gallery
+  // doesn't open" reports. Logging only the single-pick path covered business
+  // onboarding and left the reported flow silent.
+  debugLog('PHOTO', 'gallery(multi) open', { platform: Platform.OS, apiLevel: Platform.Version, selectionLimit: selectionLimit ?? null });
   // See pickFromGallery: Android's photo picker needs no permission; gating on it
   // breaks the gallery on Android 13+. Only iOS requires the permission.
   if (Platform.OS === 'ios') {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
+      debugLog('PHOTO', 'FAIL gallery(multi) permission denied', { status });
       Alert.alert('נדרשת גישה', 'אנא אפשר גישה לגלריה בהגדרות המכשיר');
       return [];
     }
@@ -125,10 +138,12 @@ export async function pickMultipleFromGallery(selectionLimit?: number): Promise<
       allowsMultipleSelection: true,
       ...(selectionLimit && selectionLimit > 0 ? { selectionLimit } : {}),
     });
-    if (result.canceled) return [];
-    return Promise.all(result.assets.map(asset => downscale(asset)));
+    if (result.canceled) { debugLog('PHOTO', 'gallery(multi) cancelled', {}); return []; }
+    const uris = await Promise.all(result.assets.map(asset => downscale(asset)));
+    debugLog('PHOTO', 'gallery(multi) result', { count: uris.length });
+    return uris;
   } catch (e) {
-    console.error('[imagePick] gallery (multi) launch failed:', e);
+    debugError('PHOTO', 'gallery(multi) launch', e, { platform: Platform.OS, apiLevel: Platform.Version });
     Alert.alert('שגיאה', 'לא ניתן לפתוח את הגלריה. נסה שוב.');
     return [];
   }

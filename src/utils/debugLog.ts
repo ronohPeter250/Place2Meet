@@ -32,6 +32,21 @@ export function debugLog(scope: string, message: string, payload?: unknown): voi
   }
 }
 
+// Error-specific logger. Firebase errors carry a machine-readable `code`
+// ('permission-denied', 'unavailable', 'auth/invalid-verification-code', …) which is
+// the single most useful field when diagnosing a failed flow — String(err) usually
+// drops it. This pulls the code out explicitly so a log line is enough to identify a
+// failure without reproducing it.
+export function debugError(scope: string, message: string, err: unknown, extra?: Record<string, unknown>): void {
+  const e = err as { code?: unknown; message?: unknown; name?: unknown } | null;
+  debugLog(scope, `FAIL ${message}`, {
+    code: typeof e?.code === 'string' ? e.code : null,
+    name: typeof e?.name === 'string' ? e.name : null,
+    error: typeof e?.message === 'string' ? e.message : String(err),
+    ...extra,
+  });
+}
+
 // Firestore can't store undefined, functions, or circular refs, and a security
 // rule cannot bound the size of an arbitrary map. Coerce to a JSON-safe, length-
 // bounded STRING so the debug_logs rule can cap payload size and block a client

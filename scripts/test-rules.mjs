@@ -22,6 +22,21 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'users/A'), { name: 'A', gender: 'male', profileComplete: true });
   await setDoc(doc(db, 'users/B'), { name: 'B', profileComplete: true });
   await setDoc(doc(db, 'users/C'), { name: 'C', profileComplete: true });
+  // A SUSPENDED user. Every other seeded principal is active, so without this no
+  // assertion anywhere could tell isActiveActor() apart from a bare `request.auth != null`
+  // — the whole moderation gate could be dropped with the suite still green.
+  await setDoc(doc(db, 'users/SUSPU'), { name: 'Susp', profileComplete: true, accountStatus: 'suspended' });
+  // SUSPB = suspended USER who ALSO owns a business doc with no accountStatus. Without
+  // this pairing the suspension assertions pass vacuously: isActiveActor() would still
+  // accept the account through isActiveBusiness(), and a suspended user can create
+  // exactly this doc for their own uid. Seeded directly so the read gate is tested even
+  // if the create path is later loosened.
+  await setDoc(doc(db, 'users/SUSPB'), { name: 'SuspB', profileComplete: true, accountStatus: 'suspended' });
+  await setDoc(doc(db, 'businesses/SUSPB'), { name: 'SuspB biz' });
+  // SUSPBIZ = a suspended BUSINESS with NO users doc — the mirror direction. Moderation
+  // is applied to whichever profile the account was suspended on, so both directions
+  // need pinning or the escape hatch only moves to the other side.
+  await setDoc(doc(db, 'businesses/SUSPBIZ'), { name: 'Suspended biz', accountStatus: 'suspended' });
   // D = a fully-filled profile (still incomplete flag); E = missing gender.
   await setDoc(doc(db, 'users/D'), { name: 'D', gender: 'male', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
   await setDoc(doc(db, 'users/E'), { name: 'E', city: 'TLV', birthday: '2000-01-01', photos: ['p1', 'p2'], datingPreference: ['female'], relationshipType: ['serious'], profileComplete: false });
@@ -63,6 +78,11 @@ const E = testEnv.authenticatedContext('E').firestore();
 const F = testEnv.authenticatedContext('F').firestore();
 const G = testEnv.authenticatedContext('G').firestore();
 const BIZ = testEnv.authenticatedContext('BIZ').firestore();
+// Signed-out caller — used to pin that "open" reads still require authentication.
+const NOAUTH = testEnv.unauthenticatedContext().firestore();
+const SUSPU = testEnv.authenticatedContext('SUSPU').firestore();
+const SUSPB = testEnv.authenticatedContext('SUSPB').firestore();
+const SUSPBIZ = testEnv.authenticatedContext('SUSPBIZ').firestore();
 
 console.log('\n[swipes]');
 await ok('A creates own like swipe A->B', setDoc(doc(A, 'swipes/A_B'), { fromUser:'A', toUser:'B', action:'like', timestamp: serverTimestamp() }));
@@ -207,9 +227,22 @@ await ok('present doc coupled to own check-in allowed', setDoc(doc(A, 'venue_pre
 await no('present doc for ANOTHER uid denied', setDoc(doc(A, 'venue_presence/vP/present/B'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
 await no('present doc without a matching check-in denied', setDoc(doc(A, 'venue_presence/vQ/present/A'), { gender: 'male', expiresAt: inMs(4 * 3600 * 1000) }));
 await no('present doc with mismatched gender denied', setDoc(doc(A, 'venue_presence/vP/present/A'), { gender: 'female', expiresAt: inMs(4 * 3600 * 1000) }));
+// The co-presence gate was REMOVED by owner decision (2026-07-27): seeing who is at a
+// venue is the product's core purpose and was unreachable behind a check-in. These
+// assertions now pin the OPEN behaviour, so that silently re-gating it (or leaving it
+// readable to signed-out/suspended callers) fails the suite.
 await ok('present list readable when checked in HERE (A at vP)', getDocs(collection(A, 'venue_presence/vP/present')));
-await no('present list NOT readable when not checked in here (B) — anti-stalking co-presence gate', getDocs(collection(B, 'venue_presence/vP/present')));
-await no('present list NOT readable with an EXPIRED check-in (C) — access lapses with presence', getDocs(collection(C, 'venue_presence/vP/present')));
+await ok('present list readable WITHOUT being checked in (B) — open by product decision', getDocs(collection(B, 'venue_presence/vP/present')));
+await ok('present list readable with an EXPIRED check-in (C)', getDocs(collection(C, 'venue_presence/vP/present')));
+await no('present list NOT readable by a signed-out caller', getDocs(collection(NOAUTH, 'venue_presence/vP/present')));
+await no('present list NOT readable by a SUSPENDED account — isActiveActor still enforced', getDocs(collection(SUSPU, 'venue_presence/vP/present')));
+// A pre-existing SECOND profile is deliberately NOT vetoed: doing so bricked the other,
+// legitimately-active account (empty map/events/chats) with no blocked screen. The
+// escape hatch is closed at the create rules below instead.
+await ok('suspended user with a PRE-EXISTING active business doc keeps business-side access (no cross-veto)', getDocs(collection(SUSPB, 'venue_presence/vP/present')));
+await no('suspended user cannot create a business profile for their own uid', setDoc(doc(SUSPU, 'businesses/SUSPU'), { name: 'escape hatch' }));
+await no('present list NOT readable by a suspended BUSINESS with no user profile', getDocs(collection(SUSPBIZ, 'venue_presence/vP/present')));
+await no('suspended business cannot create a user profile for its own uid (mirror escape hatch)', setDoc(doc(SUSPBIZ, 'users/SUSPBIZ'), { name: 'escape hatch', profileComplete: false }));
 await no('collectionGroup(present) denied — no cross-venue tracking/dump', getDocs(collectionGroup(B, 'present')));
 await ok('deleting an already-gone presence entry is a no-op (null-safe, not denied)', deleteDoc(doc(A, 'venue_presence_entries/GHOSTENTRY')));
 await no('non-owner cannot delete presence entry', deleteDoc(doc(B, 'venue_presence_entries/ENT1')));
@@ -296,6 +329,12 @@ console.log('\n[debug_logs]');
 await no('non-admin cannot read debug_logs', getDocs(collection(A, 'debug_logs')));
 await ok('debug_logs create with a bounded string payload allowed', setDoc(doc(A, 'debug_logs/dl1'), { scope: 's', message: 'm', payload: '{"k":"v"}', uid: 'A', timestamp: serverTimestamp() }));
 await ok('debug_logs create with null payload allowed', setDoc(doc(A, 'debug_logs/dl1b'), { scope: 's', message: 'm', payload: null, uid: 'A', timestamp: serverTimestamp() }));
+// A BUSINESS account has businesses/{uid} and no users/{uid}. The gate must accept it:
+// under the previous isActiveUser() check every log write from the business side of the
+// app (onboarding, event creation/management) was denied, so that half of the product
+// produced no diagnostics whatsoever.
+await ok('debug_logs create from a BUSINESS account allowed', setDoc(doc(BIZ, 'debug_logs/dlbiz'), { scope: 's', message: 'm', payload: null, uid: 'BIZ', timestamp: serverTimestamp() }));
+await no('debug_logs create with someone else\'s uid denied', setDoc(doc(A, 'debug_logs/dlspoof'), { scope: 's', message: 'm', payload: null, uid: 'B', timestamp: serverTimestamp() }));
 await no('debug_logs create with extra field denied', setDoc(doc(A, 'debug_logs/dl2'), { scope: 's', message: 'm', uid: 'A', timestamp: serverTimestamp(), evil: 'x' }));
 // payload cap (r4): reject an arbitrary map (uncappable by rules) and an oversized string.
 await no('debug_logs create with a MAP payload denied (must be null|string)', setDoc(doc(A, 'debug_logs/dl3'), { scope: 's', message: 'm', payload: { big: 'x' }, uid: 'A', timestamp: serverTimestamp() }));

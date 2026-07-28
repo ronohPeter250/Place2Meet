@@ -1,12 +1,24 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { CustomTabBar } from '../../src/components/ui/CustomTabBar';
 import { NavProfileIcon, NavChatIcon, NavHomeIcon, NavSwipesIcon, NavEventsIcon } from '../../src/components/ui/SvgIcons';
+import { subscribeToChats } from '../../src/services/chat';
+import { colors } from '../../src/theme';
 
 export default function TabsLayout() {
   const { user, userType, isLoading } = useAuth();
   const router = useRouter();
+  // Matches == the user's chats. Subscribed once at the tab-bar level so the badge is
+  // live on every screen rather than only where a screen happens to fetch it.
+  const [matchCount, setMatchCount] = useState(0);
+
+  useEffect(() => {
+    if (!user || userType === 'business') { setMatchCount(0); return; }
+    const unsub = subscribeToChats((chats) => setMatchCount(chats.length));
+    return () => unsub();
+  }, [user, userType]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -43,7 +55,18 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="swipes"
         options={{
-          tabBarIcon: ({ color }) => <NavSwipesIcon color={color} />,
+          // Badge with the live match count, so the number is visible from anywhere in
+          // the app — including while standing in a venue, which is when it matters.
+          tabBarIcon: ({ color }) => (
+            <View>
+              <NavSwipesIcon color={color} />
+              {matchCount > 0 && (
+                <View style={styles.tabBadge}>
+                  <Text style={styles.tabBadgeText}>{matchCount > 99 ? '99+' : matchCount}</Text>
+                </View>
+              )}
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
@@ -68,3 +91,13 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBadge: {
+    position: 'absolute', top: -4, left: -8,
+    minWidth: 18, height: 18, borderRadius: 9,
+    backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+  },
+  tabBadgeText: { color: colors.white, fontFamily: 'Rubik_700Bold', fontSize: 11 },
+});

@@ -10,6 +10,7 @@ import {
   GeoPoint,
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
+import { debugLog, debugError } from '../utils/debugLog';
 import { AccountStatus } from '../admin/types';
 
 export interface DayHours {
@@ -108,7 +109,15 @@ export async function createBusinessProfile(
     }, { merge: true });
   }
   stageContactPII(batch, uid, contactName, email);
-  await batch.commit();
+  // Field NAMES only — the business payload carries contact PII.
+  debugLog('BIZ', 'profile write start', { uid, fields: Object.keys(sanitizedData), isNew: !existing.exists() });
+  try {
+    await batch.commit();
+  } catch (err) {
+    debugError('BIZ', 'profile write', err, { uid, fields: Object.keys(sanitizedData) });
+    throw err;
+  }
+  debugLog('BIZ', 'profile write ok', { uid, fields: Object.keys(sanitizedData) });
 }
 
 export async function updateBusinessProfile(
