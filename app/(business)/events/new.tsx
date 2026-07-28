@@ -11,10 +11,14 @@ import { db } from '../../../src/config/firebase';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { updateEvent } from '../../../src/services/events';
 import { colors, typography, spacing, borderRadius } from '../../../src/theme';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 const HEBREW_DAYS = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'יום שבת'];
 
 export default function NewEventScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const router = useRouter();
   const { user } = useAuth();
   const { eventId } = useLocalSearchParams<{ eventId?: string }>();
@@ -173,7 +177,7 @@ export default function NewEventScreen() {
   return (
     <ScreenWrapper>
       <Header onBack={() => router.navigate('/(business)/events')} />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarClearance }]}>
         <Text style={[styles.screenTitle, !isEditMode && { marginBottom: 16 }]}>{isEditMode ? 'עריכת אירוע' : 'אירוע חדש'}</Text>
         {isEditMode && originalTitle ? <Text style={styles.editEventName}>{originalTitle}</Text> : null}
 
@@ -255,8 +259,7 @@ export default function NewEventScreen() {
 const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
-    paddingBottom: 120,
-    gap: 16,
+    gap: 16
   },
   screenTitle: {
     fontFamily: 'Rubik_600SemiBold',

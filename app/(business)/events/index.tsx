@@ -13,6 +13,7 @@ import { getEventsByCreator, AppEvent } from '../../../src/services/events';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 const HEBREW_DAYS = ['יום א', 'יום ב', 'יום ג', 'יום ד', 'יום ה', 'יום ו', 'שבת'];
 
@@ -29,6 +30,9 @@ function formatEventDate(dateTime: any): string {
 }
 
 export default function BusinessEventsScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 100 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance();
   const router = useRouter();
   const { user } = useAuth();
   const { height: screenHeight } = useWindowDimensions();
@@ -151,7 +155,7 @@ export default function BusinessEventsScreen() {
           data={events}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: tabBarClearance }]}
         />
       )}
 
@@ -337,8 +341,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   listContent: {
-    paddingTop: 16,
-    paddingBottom: 100,
+    paddingTop: 16
   },
   /* ─── Modal styles — responsive ─── */
   modalContainer: {

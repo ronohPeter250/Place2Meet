@@ -20,6 +20,7 @@ import { createSwipe, getSwipedUserIds, getSwipeableUsers } from '../../src/serv
 import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { UserProfile } from '../../src/services/users';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { useTabBarClearance } from '../../src/hooks/useTabBarClearance';
 import { colors, typography, spacing } from '../../src/theme';
 import { he } from '../../src/i18n/he';
 
@@ -27,6 +28,9 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.3;
 
 export default function SwipesScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 100 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance();
   const router = useRouter();
   const { user } = useAuth();
   const translateX = useSharedValue(0);
@@ -244,7 +248,7 @@ export default function SwipesScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: tabBarClearance }]}>
       {/* Filter button */}
       <TouchableOpacity style={styles.filterButton} onPress={() => setShowFilter(true)} activeOpacity={0.7}>
         <FilterIcon size={28} />
@@ -327,7 +331,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    paddingBottom: 100,
+    // paddingBottom is applied inline from useTabBarClearance() — device dependent.
   },
   bottomFade: {
     position: 'absolute',

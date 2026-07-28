@@ -12,6 +12,7 @@ import { createSwipe } from '../../../src/services/swipes';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors, typography } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const PHOTO_HEIGHT = SCREEN_HEIGHT * 0.5;
@@ -20,6 +21,9 @@ const PHOTO_HEIGHT = SCREEN_HEIGHT * 0.5;
 // "like" them. Chatting is match-first: a like only opens a chat if it is mutual,
 // otherwise it is recorded and the peer is notified on their side when they like back.
 export default function ViewUserScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const { userId } = useLocalSearchParams<{ userId?: string }>();
   const { user } = useAuth();
   const router = useRouter();
@@ -138,7 +142,7 @@ export default function ViewUserScreen() {
       ) : !profile ? (
         <View style={styles.center}><Text style={styles.emptyText}>הפרופיל לא נמצא</Text></View>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={{ paddingBottom: tabBarClearance }}>
           <View style={styles.photoSection}>
             {profile.photos?.[0] ? (
               <CachedImage uri={profile.photos[0]} style={styles.heroPhoto} priority="high" />
@@ -200,7 +204,6 @@ export default function ViewUserScreen() {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { ...typography.body, color: colors.textSecondary },
-  scrollContent: { paddingBottom: 120 },
   photoSection: { width: '100%' },
   heroPhoto: { width: '100%', height: PHOTO_HEIGHT },
   photoPlaceholder: { width: '100%', height: PHOTO_HEIGHT, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },

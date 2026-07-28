@@ -12,6 +12,7 @@ import { colors, typography, spacing, borderRadius } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
 import { RelationshipType } from '../../../src/hooks/useOnboarding';
 import { useFaceCheck } from '../../../src/services/faceDetection';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 // Order from Figma: קשר רציני, ערב אחד, קשר ארוך
 const REL_OPTIONS: { value: RelationshipType; label: string }[] = [
@@ -21,6 +22,9 @@ const REL_OPTIONS: { value: RelationshipType; label: string }[] = [
 ];
 
 export default function EditProfileScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const router = useRouter();
   const { user } = useAuth();
   const checkFace = useFaceCheck();
@@ -127,7 +131,7 @@ export default function EditProfileScreen() {
       <Header />
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarClearance }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
@@ -198,8 +202,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 120,
+    paddingHorizontal: 16
   },
   screenTitle: {
     ...typography.h2,

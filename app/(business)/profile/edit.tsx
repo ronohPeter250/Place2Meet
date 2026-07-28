@@ -19,6 +19,7 @@ import { uploadBusinessPhoto, getPhotoURL } from '../../../src/services/storage'
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors, typography, spacing, borderRadius } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 const DAYS = [
   { key: 'sunday', label: he.businessOnboarding.days.sunday },
@@ -43,6 +44,9 @@ function defaultHours(): BusinessHours {
 }
 
 export default function EditBusinessProfileScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const router = useRouter();
   const { user } = useAuth();
 
@@ -182,7 +186,7 @@ export default function EditBusinessProfileScreen() {
       <Header />
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarClearance }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator
@@ -298,8 +302,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 120,
+    paddingHorizontal: 16
   },
   screenTitle: {
     ...typography.h2,

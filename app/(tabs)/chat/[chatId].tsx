@@ -17,6 +17,7 @@ import {
 import { getUserProfile } from '../../../src/services/users';
 import { db } from '../../../src/config/firebase';
 import { useAuth } from '../../../src/contexts/AuthContext';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 import { colors, typography, spacing, borderRadius } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
 
@@ -373,6 +374,11 @@ export default function ChatConversationScreen() {
 
   const keyExtractor = useCallback((item: ListItem) => item.id, []);
 
+  // The composer is FIXED, so unlike a scroll view it cannot be brought back into view
+  // by scrolling: if it lands under the floating tab bar the user simply cannot type.
+  // Measured from the running device rather than assumed — see useTabBarClearance.
+  const composerClearance = useTabBarClearance(10);
+
   const handleContentSizeChange = useCallback(() => {
     // Skip the auto-scroll-to-bottom once right after a "load earlier" prepend,
     // otherwise the reader is yanked back to the newest message.
@@ -441,7 +447,7 @@ export default function ChatConversationScreen() {
           scrollEventThrottle={100}
         />
 
-        <View style={styles.inputContainer}>
+        <View style={[styles.inputContainer, { marginBottom: composerClearance }]}>
           <TouchableOpacity
             style={styles.sendButton}
             onPress={handleSend}
@@ -522,8 +528,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.background,
-    // Lift above the floating tab bar (76 height + 24 bottom offset = 100, plus buffer)
-    marginBottom: 110,
+    // marginBottom is applied inline from useTabBarClearance() — it depends on the
+    // device's bottom safe-area inset and so cannot live in a static stylesheet.
   },
   input: {
     flex: 1,

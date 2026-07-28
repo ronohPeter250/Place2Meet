@@ -29,6 +29,7 @@ import { useLocation } from '../../src/hooks/useLocation';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { getAllMapVenues, Venue } from '../../src/services/venues';
 import { checkInToVenue, subscribeAllActiveCheckinCounts } from '../../src/services/checkin';
+import { acquireFix } from '../../src/services/location';
 import { updateUserLocation, getUserProfile } from '../../src/services/users';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { LocationPinIcon, FilterIcon } from '../../src/components/ui/SvgIcons';
@@ -502,29 +503,28 @@ export default function MapScreen() {
     if (checkInFlightRef.current) return;
     checkInFlightRef.current = true;
     try {
-      // Presence requires a FRESH GPS fix at check-in time — NOT the map's cached/
-      // default coordinates (useLocation seeds Tel Aviv before the first real fix,
-      // which would let someone check in near a TLV venue prematurely). You can
-      // only mark presence when you are physically at the venue.
+      // Presence must come from a real device position — NOT this screen's own
+      // coordinates, which useLocation seeds with a Tel Aviv default before the first
+      // real fix and which would let someone check in near a TLV venue prematurely.
       const perm = await Location.getForegroundPermissionsAsync();
       if (!perm.granted) {
+        debugLog('MAP', 'FAIL check-in: permission not granted', { venueId });
         Alert.alert('נדרש מיקום', 'כדי לסמן נוכחות יש לאפשר גישה למיקום ולהיות פיזית במקום.');
         return;
       }
-      // Fetch the fix with a hard timeout so a hung GPS can never leave check-in
-      // permanently stuck (the in-flight guard would otherwise never clear).
-      let pos: Location.LocationObject;
-      try {
-        pos = await Promise.race([
-          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-          new Promise<Location.LocationObject>((_, reject) =>
-            setTimeout(() => reject(new Error('GPS_TIMEOUT')), 12000)),
-        ]);
-      } catch {
+      // acquireFix rather than a bare getCurrentPositionAsync. The one-shot call made
+      // check-in fail on devices that were drawing their own marker on this very screen,
+      // because that marker is fed by a LIVE watch subscription while the one-shot asks
+      // for a cold fix that often never settles — see src/services/location.ts. It
+      // returns only a genuinely current position (never a cached one), and its timeout
+      // keeps a hung GPS from stranding the in-flight guard.
+      const fix = await acquireFix('MAP');
+      if (!fix.coords) {
         Alert.alert('בעיה במיקום', 'לא הצלחנו לקבל את המיקום שלך. ודא שהמיקום פעיל ונסה שוב מהמקום.');
         return;
       }
-      await checkInToVenue(venueId, { lat: pos.coords.latitude, lng: pos.coords.longitude });
+      debugLog('MAP', 'check-in fix', { venueId, source: fix.source, ageMs: fix.ageMs, accuracy: fix.accuracy });
+      await checkInToVenue(venueId, { lat: fix.coords.latitude, lng: fix.coords.longitude });
       Alert.alert('נרשמת בהצלחה!', 'אתה רשום כנוכח במקום.');
       setShowVenuePopup(false);
     } catch (e) {

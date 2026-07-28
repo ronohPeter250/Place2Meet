@@ -21,8 +21,12 @@ import { useAuth } from '../../../src/contexts/AuthContext';
 import { openWhatsApp } from '../../../src/lib/contact';
 import { colors } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 export default function ProfileScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const router = useRouter();
   const { user, logout } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -90,7 +94,7 @@ export default function ProfileScreen() {
         <Text style={styles.title}>{he.profile.title}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={{ paddingBottom: tabBarClearance }}>
         <View style={styles.avatarSection}>
           <View style={styles.avatar}>
             {profile?.photos?.[0] ? (
@@ -131,7 +135,6 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingVertical: 16 },
   title: { fontFamily: 'Rubik_700Bold', fontSize: 22, color: colors.text, textAlign: 'right' },
-  scrollContent: { paddingBottom: 120 },
   avatarSection: { alignItems: 'center', paddingTop: 8, paddingBottom: 12, gap: 8 },
   businessName: { fontFamily: 'Rubik_700Bold', fontSize: 18, color: colors.text, textAlign: 'center' },
   avatar: {

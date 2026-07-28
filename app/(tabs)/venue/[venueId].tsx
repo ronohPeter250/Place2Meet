@@ -15,6 +15,7 @@ import { getUserProfile, UserProfile } from '../../../src/services/users';
 import { subscribeToChats } from '../../../src/services/chat';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors, typography } from '../../../src/theme';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 // Stable empty array — a fresh [] on every render would change identity each time and
 // re-run any memo/effect keyed on these lists.
@@ -50,6 +51,9 @@ function UserGrid({ users, onPress, emptyText }: {
 }
 
 export default function VenueDetailScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const { venueId, name } = useLocalSearchParams<{ venueId?: string; name?: string }>();
   const { user } = useAuth();
   const router = useRouter();
@@ -266,7 +270,7 @@ export default function VenueDetailScreen() {
   return (
     <ScreenWrapper>
       <Header />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: tabBarClearance }]}>
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={1}>{name ?? 'עמוד העסק'}</Text>
           {/* Matches icon + count (#6) — tap to jump to your matches (chats). */}
@@ -342,7 +346,7 @@ export default function VenueDetailScreen() {
 
 const AVATAR = 96;
 const styles = StyleSheet.create({
-  content: { paddingHorizontal: 16, paddingBottom: 120 },
+  content: { paddingHorizontal: 16 },
   titleRow: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   title: { ...typography.h2, color: colors.text, textAlign: 'right', flex: 1 },
   matchesBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },

@@ -10,6 +10,7 @@ import { getUserProfile } from '../../../src/services/users';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors, typography } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 interface ChatWithName extends Chat {
   otherUserName: string;
@@ -18,6 +19,9 @@ interface ChatWithName extends Chat {
 }
 
 export default function ChatListScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 100 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance();
   const router = useRouter();
   const { user } = useAuth();
   const [chats, setChats] = useState<ChatWithName[]>([]);
@@ -144,7 +148,7 @@ export default function ChatListScreen() {
           data={chats}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: tabBarClearance }]}
         />
       )}
     </ScreenWrapper>
@@ -186,7 +190,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   listContent: {
-    paddingTop: 22,
-    paddingBottom: 100,
+    paddingTop: 22
   },
 });

@@ -3,6 +3,13 @@ import { View, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-n
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
+// The floating bar's geometry, exported as the single source of truth. Screen content
+// has to clear this bar, and the clearance was previously re-derived by hand at each
+// call site as the literal 100/110/120 — which silently went wrong the moment the bar
+// moved. useTabBarClearance() computes it from these; nothing should hardcode it again.
+export const TAB_BAR_HEIGHT = 76;
+export const TAB_BAR_BOTTOM_OFFSET = 24;
+
 export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const { width: screenWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -15,7 +22,7 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
   }
 
   return (
-    <View style={[styles.wrapper, { bottom: insets.bottom + 24 }]}>
+    <View style={[styles.wrapper, { bottom: insets.bottom + TAB_BAR_BOTTOM_OFFSET }]}>
       <View style={[styles.inner, { width: navWidth }]}>
         {state.routes.map((route, index) => {
           const { options } = descriptors[route.key];
@@ -55,14 +62,15 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    bottom: 24,
+    // Overridden inline with the safe-area inset added; this is only the fallback.
+    bottom: TAB_BAR_BOTTOM_OFFSET,
     alignSelf: 'center',
     left: 0,
     right: 0,
     alignItems: 'center',
   },
   inner: {
-    height: 76,
+    height: TAB_BAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
@@ -75,6 +83,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 76,
+    height: TAB_BAR_HEIGHT,
   },
 });

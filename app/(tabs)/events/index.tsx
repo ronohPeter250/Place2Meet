@@ -10,18 +10,19 @@ import { getEvents, registerForEvent, getMyRegisteredEventIds, getEventAttendeeI
 import { getUserProfile, UserProfile } from '../../../src/services/users';
 import { getAllMapVenues } from '../../../src/services/venues';
 import { CHECKIN_RADIUS_METERS, getVenueGeo } from '../../../src/services/checkin';
-import { GPS_FIX_TIMEOUT_MS } from '../../../src/hooks/useLocation';
+import { acquireFix } from '../../../src/services/location';
 import { debugLog, debugError } from '../../../src/utils/debugLog';
 import { CachedImage } from '../../../src/components/ui/CachedImage';
 import { colors, typography, borderRadius } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 type Coords = { latitude: number; longitude: number };
 
 // Is the user physically at the event's venue? Uses the SAME radius as check-in so a
-// person who can mark presence can also reserve, and a fresh bounded GPS fix rather
-// than any cached coordinate (a stale one would let someone reserve from anywhere they
-// had previously been).
+// person who can mark presence can also reserve, and a genuinely current position: a
+// cached fix is never accepted, so this cannot approve a reservation from somewhere the
+// user merely used to be.
 type GateReason = 'venue_lookup_failed' | 'no_venue_coords' | 'permission_denied' | 'no_fix' | 'too_far';
 type VenueGate = { ok: true } | { ok: false; reason: GateReason; metres?: number };
 
@@ -44,25 +45,21 @@ async function assertAtEventVenue(event: AppEvent): Promise<VenueGate> {
   const { status } = await Location.requestForegroundPermissionsAsync();
   if (status !== 'granted') return { ok: false, reason: 'permission_denied' };
 
-  // getCurrentPositionAsync REJECTS (it does not resolve null) when location services
-  // are switched off or the provider is unavailable — the single most common real
-  // failure. Unhandled, that rejection escaped this gate entirely and surfaced as a
-  // generic "cannot register" with no mention of location.
-  let pos: Location.LocationObject | null = null;
-  try {
-    pos = await Promise.race([
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), GPS_FIX_TIMEOUT_MS)),
-    ]);
-  } catch {
-    return { ok: false, reason: 'no_fix' };
-  }
-  if (!pos) return { ok: false, reason: 'no_fix' };
+  // acquireFix, not getCurrentPositionAsync directly. The one-shot call alone made this
+  // gate fail on devices that were happily drawing their own marker on the map, because
+  // the map holds a LIVE watch subscription while the one-shot asks for a cold fix that
+  // often never settles. acquireFix runs both and takes the first genuinely current
+  // position — and reports failure rather than falling back to a stale one.
+  const fix = await acquireFix('EVENTS');
+  if (!fix.coords) return { ok: false, reason: 'no_fix' };
 
   const metres = distanceKm(
-    { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+    { latitude: fix.coords.latitude, longitude: fix.coords.longitude },
     { latitude: geo.lat, longitude: geo.lng },
   ) * 1000;
+  debugLog('EVENTS', 'gate distance', {
+    eventId: event.id, metres: Math.round(metres), source: fix.source, ageMs: fix.ageMs,
+  });
   return metres <= CHECKIN_RADIUS_METERS ? { ok: true } : { ok: false, reason: 'too_far', metres };
 }
 
@@ -97,6 +94,9 @@ function distanceKm(a: Coords, b: Coords): number {
 }
 
 export default function EventsScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 100 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance();
   const router = useRouter();
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -309,21 +309,19 @@ export default function EventsScreen() {
         Alert.alert('נדרשת גישה למיקום', 'אפשר גישה למיקום כדי לסנן אירועים לפי קרבה אליך.');
         return;
       }
-      // The GPS fix is bounded: getCurrentPositionAsync can hang forever on Android
-      // when no fix is obtainable, which would leave this button spinning and disabled
-      // with no way out for the rest of the session.
-      const [pos, venues] = await Promise.all([
-        Promise.race([
-          Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), GPS_FIX_TIMEOUT_MS)),
-        ]),
+      // acquireFix runs the live watch alongside the one-shot call (see its comment):
+      // relying on the one-shot alone is what left this button failing on devices that
+      // were showing their own location on the map at the same moment.
+      const [fix, venues] = await Promise.all([
+        acquireFix('EVENTS'),
         getAllMapVenues(),
       ]);
-      if (!pos) {
-        debugLog('EVENTS', 'FAIL nearby: GPS fix timed out', { timeoutMs: GPS_FIX_TIMEOUT_MS });
+      if (!fix.coords) {
+        debugLog('EVENTS', 'FAIL nearby: no position from any source', {});
         Alert.alert('שגיאה', 'לא ניתן לקבל מיקום כרגע. נסה שוב.');
         return;
       }
+      const pos = { coords: fix.coords };
       const coords = new Map<string, Coords>();
       for (const v of venues) {
         if (v.location) {
@@ -426,7 +424,7 @@ export default function EventsScreen() {
           data={sortedEvents}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: tabBarClearance }]}
         />
       )}
 
@@ -581,8 +579,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   listContent: {
-    paddingVertical: 12,
-    paddingBottom: 100,
+    paddingVertical: 12
   },
   modalOverlay: {
     flex: 1,

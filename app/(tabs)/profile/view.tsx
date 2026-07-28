@@ -9,11 +9,15 @@ import { getUserProfile, UserProfile, calculateAge } from '../../../src/services
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { colors, typography } from '../../../src/theme';
 import { he } from '../../../src/i18n/he';
+import { useTabBarClearance } from '../../../src/hooks/useTabBarClearance';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const PHOTO_HEIGHT = SCREEN_HEIGHT * 0.5;
 
 export default function ViewProfileScreen() {
+  // Clear the floating tab bar using the running device's bottom inset — the
+  // literal 120 this replaces was only correct when that inset was 0.
+  const tabBarClearance = useTabBarClearance(20);
   const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
@@ -38,7 +42,7 @@ export default function ViewProfileScreen() {
   return (
     <ScreenWrapper>
       <Header />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: tabBarClearance }]}>
         {/* Profile photo */}
         <View style={styles.photoSection}>
           {profile?.photos?.[0] ? (
@@ -98,7 +102,6 @@ export default function ViewProfileScreen() {
 
 const styles = StyleSheet.create({
   scrollContent: {
-    paddingBottom: 120,
   },
   photoSection: {
     width: '100%',

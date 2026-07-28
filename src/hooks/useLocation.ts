@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as Location from 'expo-location';
+import { GPS_FIX_TIMEOUT_MS } from '../services/location';
 
-// A one-shot GPS fix can hang indefinitely on Android. Awaits of it inside THIS hook
-// are bounded by this, so a stuck fix degrades to "use the default region" instead of
-// an infinite spinner. Matches the check-in timeout in app/(tabs)/map.tsx. (Callers
-// outside this hook must bound their own calls — this constant does not reach them.)
-export const GPS_FIX_TIMEOUT_MS = 12000;
+// Re-exported for existing importers; defined once in src/services/location.ts so the
+// hook and the one-shot callers cannot drift apart.
+export { GPS_FIX_TIMEOUT_MS };
 const INITIAL_FIX_TIMEOUT_MS = GPS_FIX_TIMEOUT_MS;
 
 interface LocationState {
