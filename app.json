@@ -53,7 +53,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "d24788fe-e0b3-47be-b818-3aed5849bf7c"
+        "projectId": "17b963b5-6ba1-497b-8d60-077c17088ff9"
       },
       "firebase": {
         "apiKey": "AIzaSyCfbmFqoCT_p5jZrV4JJn18593UwZTz14U",
@@ -69,6 +69,8 @@
     "web": {
       "output": "single",
       "bundler": "metro"
-    }
+    },
+    "owner": "peterronohs-team"
   }
 }
+
